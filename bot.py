@@ -233,10 +233,34 @@ async def post_init(app):
 
 
 def main():
-    threading.Thread(target=start_web_server, daemon=True).start()
-    app = Application.builder().token(TOKEN).post_init(post_init).build()
+    threading.Thread(
+        target=start_web_server,
+        daemon=True
+    ).start()
+
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .connect_timeout(30)
+        .read_timeout(30)
+        .write_timeout(30)
+        .pool_timeout(30)
+        .get_updates_connect_timeout(30)
+        .get_updates_read_timeout(30)
+        .get_updates_write_timeout(30)
+        .get_updates_pool_timeout(30)
+        .post_init(post_init)
+        .build()
+    )
+
     app.add_handler(CallbackQueryHandler(button))
-    app.run_polling()
+
+    app.run_polling(
+        bootstrap_retries=-1,
+        poll_interval=1,
+        timeout=30,
+        drop_pending_updates=False
+    )
 
 
 if __name__ == "__main__":
