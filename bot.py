@@ -73,21 +73,39 @@ def start_web_server():
     server.serve_forever()
 
 
-# ارسال پنل اصلی
+# ارسال پنل اصلی (شامل کدهای ناهار و شام نجف و بابایی)
 async def send_panel(app):
     keyboard = [
         [
             InlineKeyboardButton(
-                "🟢 کد نجف می‌فروشم", callback_data="najaf_sell"
+                "🟢 کد ناهار نجف می‌فروشم", callback_data="najaf_sell"
             ),
-            InlineKeyboardButton("🔵 کد نجف می‌خرم", callback_data="najaf_buy"),
+            InlineKeyboardButton(
+                "🔵 کد ناهار نجف می‌خرم", callback_data="najaf_buy"
+            ),
         ],
         [
             InlineKeyboardButton(
-                "🟠 کد بابایی می‌فروشم", callback_data="babayi_sell"
+                "🌙 کد شام نجف می‌فروشم", callback_data="najaf_dinner_sell"
             ),
             InlineKeyboardButton(
-                "🟣 کد بابایی می‌خرم", callback_data="babayi_buy"
+                "🌙 کد شام نجف می‌خرم", callback_data="najaf_dinner_buy"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🟠 کد ناهار بابایی می‌فروشم", callback_data="babayi_sell"
+            ),
+            InlineKeyboardButton(
+                "🟣 کد ناهار بابایی می‌خرم", callback_data="babayi_buy"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🌙 کد شام بابایی می‌فروشم", callback_data="babayi_dinner_sell"
+            ),
+            InlineKeyboardButton(
+                "🌙 کد شام بابایی می‌خرم", callback_data="babayi_dinner_buy"
             ),
         ],
         [
@@ -205,12 +223,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # گزینه‌های پنل
+    # گزینه‌های پنل با پیشوند کلمه‌ی «کد»
     options = {
-        "najaf_sell": "🟢 کد نجف می‌فروشم",
-        "najaf_buy": "🔵 کد نجف می‌خرم",
-        "babayi_sell": "🟠 کد بابایی می‌فروشم",
-        "babayi_buy": "🟣 کد بابایی می‌خرم",
+        "najaf_sell": "🟢 کد ناهار نجف می‌فروشم",
+        "najaf_buy": "🔵 کد ناهار نجف می‌خرم",
+        "najaf_dinner_sell": "🌙 کد شام نجف می‌فروشم",
+        "najaf_dinner_buy": "🌙 کد شام نجف می‌خرم",
+        "babayi_sell": "🟠 کد ناهار بابایی می‌فروشم",
+        "babayi_buy": "🟣 کد ناهار بابایی می‌خرم",
+        "babayi_dinner_sell": "🌙 کد شام بابایی می‌فروشم",
+        "babayi_dinner_buy": "🌙 کد شام بابایی می‌خرم",
         "exchange": "🔄 معاوضه کد غذا",
     }
 
