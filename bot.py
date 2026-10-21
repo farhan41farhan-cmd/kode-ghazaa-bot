@@ -120,13 +120,13 @@ async def send_panel(app):
     )
 
 
-# حذف خودکار پیام هشدار
+# حذف خودکار پیام هشدار (مدیریت‌شده برای جلوگیری از ارور)
 async def delete_later(message, seconds=WARNING_SECONDS):
     await asyncio.sleep(seconds)
     try:
         await message.delete()
     except Exception:
-        logging.exception("خطا در حذف پیام موقت")
+        pass
 
 
 # ارسال هشدار موقت
@@ -211,7 +211,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=GROUP_ID, message_id=message_id
                 )
             except Exception:
-                logging.exception("خطا در حذف درخواست قبلی")
+                pass
 
             data["active"].pop(user_id, None)
             save_data()
@@ -223,7 +223,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # گزینه‌های پنل با پیشوند کلمه‌ی «کد»
+    # گزینه‌های پنل
     options = {
         "najaf_sell": "🟢 کد ناهار نجف می‌فروشم",
         "najaf_buy": "🔵 کد ناهار نجف می‌خرم",
