@@ -120,7 +120,7 @@ async def send_panel(app):
     )
 
 
-# حذف خودکار پیام هشدار (مدیریت‌شده برای جلوگیری از ارور)
+# حذف خودکار پیام هشدار
 async def delete_later(message, seconds=WARNING_SECONDS):
     await asyncio.sleep(seconds)
     try:
@@ -162,10 +162,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     user_id = str(user.id)
 
+    # ایمن‌سازی پاسخ به دکمه برای جلوگیری از کرش کردن ربات در صورت منقضی شدن کوئری
     try:
         await query.answer()
     except Exception:
-        logging.exception("خطا در پاسخ به دکمه")
+        pass
 
     # حذف درخواست خود کاربر
     if query.data.startswith("delete:"):
@@ -180,7 +181,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await query.message.delete()
         except Exception:
-            logging.exception("خطا در حذف درخواست")
             return
 
         active = data["active"].get(user_id)
