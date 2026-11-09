@@ -11,7 +11,6 @@ import jdatetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
 
-# ثبت خطاها در Logs مربوط به Render
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -30,16 +29,13 @@ def load_data():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             loaded = json.load(f)
-
         if not isinstance(loaded, dict):
             raise ValueError("Invalid data")
-
     except (FileNotFoundError, json.JSONDecodeError, ValueError):
         loaded = {}
 
     loaded.setdefault("active", {})
     loaded.setdefault("cooldowns", {})
-
     return loaded
 
 
@@ -48,16 +44,12 @@ data = load_data()
 
 def save_data():
     temp_file = DATA_FILE + ".tmp"
-
     with open(temp_file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-
     os.replace(temp_file, DATA_FILE)
 
 
-# وب سرور برای Render
 class HealthHandler(BaseHTTPRequestHandler):
-
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
@@ -73,44 +65,24 @@ def start_web_server():
     server.serve_forever()
 
 
-# ارسال پنل اصلی (شامل کدهای ناهار و شام نجف و بابایی)
 async def send_panel(app):
+    buttons = [
+        ("🟢 کد ناهار نجف می‌فروشم", "najaf_sell"),
+        ("🔵 کد ناهار نجف می‌خرم", "najaf_buy"),
+        ("🌙 کد شام نجف می‌فروشم", "najaf_dinner_sell"),
+        ("🌙 کد شام نجف می‌خرم", "najaf_dinner_buy"),
+        ("🟠 کد ناهار بابایی می‌فروشم", "babayi_sell"),
+        ("🟣 کد ناهار بابایی می‌خرم", "babayi_buy"),
+        ("🌙 کد شام بابایی می‌فروشم", "babayi_dinner_sell"),
+        ("🌙 کد شام بابایی می‌خرم", "babayi_dinner_buy"),
+        ("🟡 کد ناهار بقیه الله می‌فروشم", "baghi_sell"),
+        ("🔵 کد ناهار بقیه الله می‌خرم", "baghi_buy"),
+        ("🔄 معاوضه کد غذا", "exchange"),
+    ]
+
     keyboard = [
-        [
-            InlineKeyboardButton(
-                "🟢 کد ناهار نجف می‌فروشم", callback_data="najaf_sell"
-            ),
-            InlineKeyboardButton(
-                "🔵 کد ناهار نجف می‌خرم", callback_data="najaf_buy"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "🌙 کد شام نجف می‌فروشم", callback_data="najaf_dinner_sell"
-            ),
-            InlineKeyboardButton(
-                "🌙 کد شام نجف می‌خرم", callback_data="najaf_dinner_buy"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "🟠 کد ناهار بابایی می‌فروشم", callback_data="babayi_sell"
-            ),
-            InlineKeyboardButton(
-                "🟣 کد ناهار بابایی می‌خرم", callback_data="babayi_buy"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "🌙 کد شام بابایی می‌فروشم", callback_data="babayi_dinner_sell"
-            ),
-            InlineKeyboardButton(
-                "🌙 کد شام بابایی می‌خرم", callback_data="babayi_dinner_buy"
-            ),
-        ],
-        [
-            InlineKeyboardButton("🔄 معاوضه کد غذا", callback_data="exchange"),
-        ],
+        [InlineKeyboardButton(text, callback_data=callback)]
+        for text, callback in buttons
     ]
 
     await app.bot.send_message(
@@ -120,7 +92,6 @@ async def send_panel(app):
     )
 
 
-# حذف خودکار پیام هشدار
 async def delete_later(message, seconds=WARNING_SECONDS):
     await asyncio.sleep(seconds)
     try:
@@ -129,7 +100,6 @@ async def delete_later(message, seconds=WARNING_SECONDS):
         pass
 
 
-# ارسال هشدار موقت
 async def send_temporary_warning(context, text, user_id, previous=None):
     keyboard = None
 
@@ -144,7 +114,6 @@ async def send_temporary_warning(context, text, user_id, previous=None):
     msg = await context.bot.send_message(
         chat_id=GROUP_ID, text=text, reply_markup=keyboard
     )
-
     asyncio.create_task(delete_later(msg))
 
 
@@ -152,23 +121,19 @@ def current_iran_time():
     return datetime.now(IRAN_TZ)
 
 
-# مدیریت دکمه‌ها
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-
     if query is None:
         return
 
     user = query.from_user
     user_id = str(user.id)
 
-    # ایمن‌سازی پاسخ به دکمه برای جلوگیری از کرش کردن ربات در صورت منقضی شدن کوئری
     try:
         await query.answer()
     except Exception:
         pass
 
-    # حذف درخواست خود کاربر
     if query.data.startswith("delete:"):
         try:
             owner_id = int(query.data.split(":", 1)[1])
@@ -184,14 +149,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         active = data["active"].get(user_id)
-
         if active and active.get("message_id") == query.message.message_id:
             data["active"].pop(user_id, None)
             save_data()
-
         return
 
-    # حذف درخواست قبلی از طریق هشدار
     if query.data.startswith("remove:"):
         try:
             _, owner_text, message_text = query.data.split(":", 2)
@@ -220,10 +182,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.delete()
         except Exception:
             pass
-
         return
 
-    # گزینه‌های پنل
     options = {
         "najaf_sell": "🟢 کد ناهار نجف می‌فروشم",
         "najaf_buy": "🔵 کد ناهار نجف می‌خرم",
@@ -233,6 +193,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "babayi_buy": "🟣 کد ناهار بابایی می‌خرم",
         "babayi_dinner_sell": "🌙 کد شام بابایی می‌فروشم",
         "babayi_dinner_buy": "🌙 کد شام بابایی می‌خرم",
+        "baghi_sell": "🟡 کد ناهار بقیه الله می‌فروشم",
+        "baghi_buy": "🔵 کد ناهار بقیه الله می‌خرم",
         "exchange": "🔄 معاوضه کد غذا",
     }
 
@@ -243,7 +205,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = current_iran_time()
     today = now.date().isoformat()
 
-    # محدودیت ۱۵ دقیقه‌ای
     cooldown_value = data["cooldowns"].get(user_id)
 
     if cooldown_value:
@@ -264,7 +225,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             data["cooldowns"].pop(user_id, None)
 
-    # جلوگیری از چند درخواست فعال در یک روز
     active = data["active"].get(user_id)
 
     if active and active.get("date") == today:
@@ -276,7 +236,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # تاریخ شمسی
     jalali = jdatetime.datetime.fromgregorian(datetime=now)
 
     weekdays = {
@@ -288,6 +247,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         5: "پنجشنبه",
         6: "جمعه",
     }
+
     months = {
         1: "فروردین",
         2: "اردیبهشت",
@@ -304,8 +264,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     date_text = (
-        f"{weekdays[jalali.weekday()]}، {jalali.day} {months[jalali.month]} {jalali.year}"
+        f"{weekdays[jalali.weekday()]}، "
+        f"{jalali.day} {months[jalali.month]} {jalali.year}"
     )
+
     time_text = now.strftime("%H:%M:%S")
 
     name = (
@@ -315,7 +277,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     message_text = (
-        f'<a href="tg://user?id={user.id}">{name}</a>\n{request_text}\n\n📅 {date_text}\n⏰ ساعت ایران: {time_text}'
+        f'<a href="tg://user?id={user.id}">{name}</a>\n'
+        f"{request_text}\n\n📅 {date_text}\n"
+        f"⏰ ساعت ایران: {time_text}"
     )
 
     keyboard = InlineKeyboardMarkup(
@@ -329,10 +293,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard,
     )
 
-    data["active"][user_id] = {"message_id": sent.message_id, "date": today}
+    data["active"][user_id] = {
+        "message_id": sent.message_id,
+        "date": today,
+    }
+
     data["cooldowns"][user_id] = (
         now + timedelta(minutes=COOLDOWN_MINUTES)
     ).isoformat()
+
     save_data()
 
 
@@ -346,7 +315,10 @@ async def post_init(app):
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logging.error("خطا هنگام پردازش درخواست تلگرام:", exc_info=context.error)
+    logging.error(
+        "خطا هنگام پردازش درخواست تلگرام:",
+        exc_info=context.error,
+    )
 
 
 def main():
@@ -371,6 +343,7 @@ def main():
     app.add_error_handler(on_error)
 
     logging.info("ربات کد غذا در حال راه‌اندازی است.")
+
     app.run_polling(
         bootstrap_retries=-1,
         poll_interval=1,
