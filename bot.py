@@ -1,64 +1,78 @@
+
 import asyncio
 import json
 import logging
 import os
 import threading
 from datetime import datetime, timedelta
+from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
 import jdatetime
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import TelegramError, NetworkError
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    Update,
+)
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
-# ---------------- تنظیمات ----------------
+# ---------------- تنظیمات اصلی ----------------
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
+
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 TOKEN = os.getenv("BOT_TOKEN", "").strip()
-ADMIN_ID_TEXT = os.getenv("ADMIN_ID", "0").strip()
-ADMIN_ID = int(ADMIN_ID_TEXT) if ADMIN_ID_TEXT.isdigit() else 0
-
+ADMIN_ID = 2022751165
 GROUP_ID = -1004389774687
+
 DATA_FILE = os.getenv("DATA_FILE", "requests.json")
+
 IRAN_TZ = ZoneInfo("Asia/Tehran")
 
 COOLDOWN_MINUTES = 15
 WARNING_SECONDS = 10
-HEALTH_CHECK_SECONDS = 60
-RECONNECT_NOTICE_COOLDOWN = 300
+HEALTH_CHECK_SECONDS = 30
+
+BOT_CONNECTION_STATUS = "در حال راه‌اندازی"
 
 if not TOKEN:
-    raise RuntimeError("متغیر محیطی BOT_TOKEN در Render تنظیم نشده است.")
+    raise RuntimeError("BOT_TOKEN در Environment تنظیم نشده است.")
+
 
 # ---------------- ذخیره اطلاعات ----------------
 
 def load_data():
     try:
-        with open(DATA_FILE, "r", encoding="utf-8") as file:
-            loaded = json.load(file)
-        if not isinstance(loaded, dict):
-            raise ValueError("Invalid data")
-    except (FileNotFoundError, json.JSONDecodeError, ValueError):
-        loaded = {}
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            result = json.load(f)
 
-    loaded.setdefault("active", {})
-    loaded.setdefault("cooldowns", {})
-    loaded.setdefault("bot_messages", [])
-    loaded.setdefault("panel_message_id", None)
-    loaded.setdefault("reminder_message_id", None)
-    loaded.setdefault("reminder_delete_at", None)
-    return loaded
+        if not isinstance(result, dict):
+            result = {}
+
+    except (FileNotFoundError, json.JSONDecodeError, ValueError):
+        result = {}
+
+    result.setdefault("active", {})
+    result.setdefault("cooldowns", {})
+    result.setdefault("bot_messages", [])
+    result.setdefault("panel_message_id", None)
+    result.setdefault("reminder_message_id", None)
+
+    return result
 
 
 data = load_data()
@@ -66,9 +80,15 @@ data = load_data()
 
 def save_data():
     temp_file = DATA_FILE + ".tmp"
-    with open(temp_file, "w", encoding="utf-8") as file:
-        json.dump(data, file, ensure_ascii=False, indent=2)
+
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
     os.replace(temp_file, DATA_FILE)
+
+
+def current_time():
+    return datetime.now(IRAN_TZ)
 
 
 def track_message(message_id):
@@ -83,42 +103,80 @@ def untrack_message(message_id):
         save_data()
 
 
-def current_iran_time():
-    return datetime.now(IRAN_TZ)
+# ---------------- پیام وضعیت مدیر ----------------
 
-
-# ---------------- گزارش وضعیت به مدیر ----------------
-
-async def notify_admin(app, text):
-    if not ADMIN_ID:
-        logging.warning("ADMIN_ID تنظیم نشده؛ پیام خصوصی وضعیت ارسال نشد.")
-        return
+async def notify_admin(app, message):
     try:
-        await app.bot.send_message(chat_id=ADMIN_ID, text=text)
+        await app.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=message,
+        )
     except TelegramError:
         logging.exception("ارسال پیام وضعیت به مدیر ناموفق بود.")
 
 
+# ---------------- شروع ربات در پیوی ----------------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if update.effective_message is None or user is None:
+    message = update.effective_message
+
+    if not user or not message:
         return
 
-    await update.effective_message.reply_text(
-        f"سلام {user.first_name} عزیز ❤️\n\n"
-        "ربات کد غذا فعاله.\n"
-        f"🆔 آیدی عددی شما:\n{user.id}\n\n"
-        "برای دریافت گزارش وضعیت ربات، همین دستور را در پیوی ربات اجرا کنید."
+    # فقط مدیر اجازه استفاده از پنل خصوصی را دارد.
+    if user.id != ADMIN_ID:
+        await message.reply_text("⛔ شما اجازه دسترسی به این بخش را ندارید.")
+        return
+
+    keyboard = ReplyKeyboardMarkup(
+        [["📡 وضعیت ربات"]],
+        resize_keyboard=True,
     )
-    logging.info("کاربر %s دستور /start را اجرا کرد.", user.id)
+
+    await message.reply_text(
+        "سلام مدیر عزیز ❤️\n\n"
+        "به پنل وضعیت ربات خوش آمدی.\n"
+        "برای مشاهده وضعیت اتصال، دکمه زیر را بزن.",
+        reply_markup=keyboard,
+    )
+
+
+async def private_status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    user = update.effective_user
+    message = update.effective_message
+
+    if not user or not message:
+        return
+
+    if user.id != ADMIN_ID:
+        return
+
+    if message.text != "📡 وضعیت ربات":
+        return
+
+    if BOT_CONNECTION_STATUS == "وصل":
+        text = "🟢 وضعیت ربات: وصل است."
+
+    elif BOT_CONNECTION_STATUS == "قطع":
+        text = "🔴 وضعیت ربات: قطع است."
+
+    else:
+        text = "🟡 وضعیت ربات: در حال راه‌اندازی است."
+
+    await message.reply_text(text)
 
 
 # ---------------- وب‌سرور Render ----------------
 
 class HealthHandler(BaseHTTPRequestHandler):
+
     def do_GET(self):
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Type", "text/plain")
         self.end_headers()
         self.wfile.write(b"OK")
 
@@ -128,76 +186,64 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 def start_web_server():
     port = int(os.environ.get("PORT", "10000"))
-    server = ThreadingHTTPServer(("0.0.0.0", port), HealthHandler)
-    logging.info("Health server listening on port %s", port)
+
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler,
+    )
+
+    logging.info("Health server started on port %s", port)
     server.serve_forever()
 
 
-# ---------------- پنل اصلی ----------------
+# ---------------- دکمه‌های پنل گروه ----------------
 
-PANEL_BUTTONS = [
-    ("🟢 کد ناهار نجف می‌فروشم", "najaf_sell"),
-    ("🔵 کد ناهار نجف می‌خرم", "najaf_buy"),
-    ("🌙 کد شام نجف می‌فروشم", "najaf_dinner_sell"),
-    ("🌙 کد شام نجف می‌خرم", "najaf_dinner_buy"),
-    ("🟠 کد ناهار بابایی می‌فروشم", "babayi_sell"),
-    ("🟣 کد ناهار بابایی می‌خرم", "babayi_buy"),
-    ("🌙 کد شام بابایی می‌فروشم", "babayi_dinner_sell"),
-    ("🌙 کد شام بابایی می‌خرم", "babayi_dinner_buy"),
-    ("🟡 کد ناهار بقیه‌الله می‌فروشم", "baghi_sell"),
-    ("🔵 کد ناهار بقیه‌الله می‌خرم", "baghi_buy"),
-    ("🔄 معاوضه کد غذا", "exchange"),
-]
+# این callbackها برای پنل پین‌شده قبلی هستند.
+# این کد هیچ پنل جدیدی ارسال یا ویرایش نمی‌کند.
 
-
-async def send_panel(app):
-    keyboard = [
-        [InlineKeyboardButton(label, callback_data=callback)]
-        for label, callback in PANEL_BUTTONS
-    ]
-    markup = InlineKeyboardMarkup(keyboard)
-    panel_id = data.get("panel_message_id")
-
-    if panel_id:
-        try:
-            await app.bot.edit_message_text(
-                chat_id=GROUP_ID,
-                message_id=panel_id,
-                text="🍽 کد غذا\n\nیکی از گزینه‌های زیر را انتخاب کنید:",
-                reply_markup=markup,
-            )
-            return
-        except TelegramError:
-            logging.warning("پنل قبلی در دسترس نیست؛ پنل تازه ارسال می‌شود.")
-
-    sent = await app.bot.send_message(
-        chat_id=GROUP_ID,
-        text="🍽 کد غذا\n\nیکی از گزینه‌های زیر را انتخاب کنید:",
-        reply_markup=markup,
-    )
-    data["panel_message_id"] = sent.message_id
-    track_message(sent.message_id)
-    save_data()
+OPTIONS = {
+    "najaf_sell": "🟢 کد ناهار نجف می‌فروشم",
+    "najaf_buy": "🔵 کد ناهار نجف می‌خرم",
+    "najaf_dinner_sell": "🌙 کد شام نجف می‌فروشم",
+    "najaf_dinner_buy": "🌙 کد شام نجف می‌خرم",
+    "babayi_sell": "🟠 کد ناهار بابایی می‌فروشم",
+    "babayi_buy": "🟣 کد ناهار بابایی می‌خرم",
+    "babayi_dinner_sell": "🌙 کد شام بابایی می‌فروشم",
+    "babayi_dinner_buy": "🌙 کد شام بابایی می‌خرم",
+    "baghi_sell": "🟡 کد ناهار بقیه‌الله می‌فروشم",
+    "baghi_buy": "🔵 کد ناهار بقیه‌الله می‌خرم",
+    "exchange": "🔄 معاوضه کد غذا",
+}
 
 
 # ---------------- پیام‌های موقت ----------------
 
-async def delete_later(message, seconds=WARNING_SECONDS):
-    await asyncio.sleep(seconds)
+async def delete_later(message):
+    await asyncio.sleep(WARNING_SECONDS)
+
     try:
         await message.delete()
     except TelegramError:
         pass
+
     untrack_message(message.message_id)
 
 
-async def send_temporary_warning(context, text, user_id, previous=None):
+async def send_temporary_warning(
+    context,
+    text,
+    user_id,
+    previous=None,
+):
     keyboard = None
+
     if previous:
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton(
                 "🗑 حذف درخواست قبلی",
-                callback_data=f"remove:{user_id}:{previous['message_id']}",
+                callback_data=(
+                    f"remove:{user_id}:{previous['message_id']}"
+                ),
             )
         ]])
 
@@ -206,7 +252,9 @@ async def send_temporary_warning(context, text, user_id, previous=None):
         text=text,
         reply_markup=keyboard,
     )
+
     track_message(msg.message_id)
+
     context.application.create_task(delete_later(msg))
 
 
@@ -214,34 +262,59 @@ async def send_temporary_warning(context, text, user_id, previous=None):
 
 async def midnight_cleanup(app):
     logging.info("شروع پاک‌سازی نیمه‌شب")
+
     panel_id = data.get("panel_message_id")
 
     for message_id in list(data["bot_messages"]):
+
+        # پنل پین‌شده قبلی حذف نمی‌شود.
         if message_id == panel_id:
             continue
-        try:
-            await app.bot.delete_message(chat_id=GROUP_ID, message_id=message_id)
-        except TelegramError:
-            logging.warning("حذف پیام %s ناموفق بود.", message_id)
 
-    data["bot_messages"] = [panel_id] if panel_id else []
+        try:
+            await app.bot.delete_message(
+                chat_id=GROUP_ID,
+                message_id=message_id,
+            )
+        except TelegramError:
+            logging.warning(
+                "حذف پیام %s ناموفق بود.",
+                message_id,
+            )
+
+    data["bot_messages"] = (
+        [panel_id] if panel_id else []
+    )
+
     data["active"] = {}
     data["cooldowns"] = {}
     data["reminder_message_id"] = None
-    data["reminder_delete_at"] = None
+
     save_data()
+
     logging.info("پاک‌سازی نیمه‌شب تمام شد.")
 
 
 async def midnight_scheduler(app):
     while True:
-        now = current_iran_time()
-        next_midnight = (now + timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
+        now = current_time()
+
+        next_midnight = (
+            now + timedelta(days=1)
+        ).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
         )
-        await asyncio.sleep(max(1, (next_midnight - now).total_seconds()))
+
+        seconds = (next_midnight - now).total_seconds()
+
+        await asyncio.sleep(max(1, seconds))
+
         try:
             await midnight_cleanup(app)
+
         except Exception:
             logging.exception("خطا در پاک‌سازی نیمه‌شب")
 
@@ -249,14 +322,23 @@ async def midnight_scheduler(app):
 # ---------------- یادآوری چهارشنبه ساعت ۰۰:۰۱ ----------------
 
 def next_wednesday_reminder():
-    now = current_iran_time()
-    # در پایتون دوشنبه=0 و چهارشنبه=2 است.
+    now = current_time()
+
+    # چهارشنبه در weekday پایتون عدد ۲ است.
     days = (2 - now.weekday()) % 7
-    target = (now + timedelta(days=days)).replace(
-        hour=0, minute=1, second=0, microsecond=0
+
+    target = (
+        now + timedelta(days=days)
+    ).replace(
+        hour=0,
+        minute=1,
+        second=0,
+        microsecond=0,
     )
+
     if target <= now:
         target += timedelta(days=7)
+
     return target
 
 
@@ -265,9 +347,9 @@ async def send_reminder(app):
         chat_id=GROUP_ID,
         text="🍽 کد غذا رزرو کنید یادتون نره 😉",
     )
+
     data["reminder_message_id"] = msg.message_id
-    # پیام یادآوری تا پاک‌سازی نیمه‌شب بعدی باقی می‌ماند.
-    data["reminder_delete_at"] = None
+
     track_message(msg.message_id)
     save_data()
 
@@ -275,58 +357,65 @@ async def send_reminder(app):
 async def reminder_scheduler(app):
     while True:
         target = next_wednesday_reminder()
-        seconds = max(1, (target - current_iran_time()).total_seconds())
-        logging.info("یادآوری بعدی در %s ارسال می‌شود.", target.isoformat())
-        await asyncio.sleep(seconds)
+
+        seconds = (
+            target - current_time()
+        ).total_seconds()
+
+        await asyncio.sleep(max(1, seconds))
+
         try:
             await send_reminder(app)
-            logging.info("یادآوری چهارشنبه ارسال شد و تا پاک‌سازی بعدی می‌ماند.")
+
+            logging.info("یادآوری چهارشنبه ارسال شد.")
+
         except Exception:
             logging.exception("ارسال یادآوری ناموفق بود.")
 
 
-# ---------------- نظارت بر اتصال تلگرام ----------------
+# ---------------- بررسی اتصال تلگرام ----------------
 
 async def connection_monitor(app):
-    was_connected = True
-    last_failure_notice = None
+    global BOT_CONNECTION_STATUS
 
     while True:
         await asyncio.sleep(HEALTH_CHECK_SECONDS)
+
         try:
             await app.bot.get_me()
-            if not was_connected:
+
+            # اگر قبلاً قطع بوده، پیام وصل‌شدن ارسال شود.
+            if BOT_CONNECTION_STATUS != "وصل":
+
+                BOT_CONNECTION_STATUS = "وصل"
+
                 await notify_admin(
                     app,
-                    "🟢 ربات دوباره به تلگرام وصل شد و ارتباط برقرار است.",
+                    "🟢 ربات وصل شد؛ وضعیت ربات وصل است."
                 )
-            was_connected = True
-            last_failure_notice = None
+
         except Exception:
             logging.exception("بررسی اتصال تلگرام ناموفق بود.")
-            now = current_iran_time()
-            if was_connected or (
-                last_failure_notice is None
-                or (now - last_failure_notice).total_seconds()
-                >= RECONNECT_NOTICE_COOLDOWN
-            ):
+
+            if BOT_CONNECTION_STATUS != "قطع":
+
+                BOT_CONNECTION_STATUS = "قطع"
+
                 await notify_admin(
                     app,
-                    "🔴 ارتباط ربات با تلگرام قطع یا ناپایدار شده است؛ "
-                    "ربات در حال تلاش برای اتصال مجدد است.",
+                    "🔴 ربات قطع شد؛ ارتباط با تلگرام برقرار نیست."
                 )
-                last_failure_notice = now
-            was_connected = False
 
 
-# ---------------- مدیریت دکمه‌ها ----------------
+# ---------------- مدیریت دکمه‌های پنل قبلی ----------------
 
-OPTIONS = dict(PANEL_BUTTONS)
-
-
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
     query = update.callback_query
-    if query is None or query.from_user is None:
+
+    if not query or not query.from_user:
         return
 
     user = query.from_user
@@ -337,100 +426,140 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except TelegramError:
         pass
 
-    # حذف پیام درخواست فقط توسط صاحب آن
+    # حذف درخواست توسط صاحب درخواست
     if query.data.startswith("delete:"):
+
         try:
-            owner_id = int(query.data.split(":", 1)[1])
-        except (ValueError, IndexError):
+            owner_id = int(
+                query.data.split(":", 1)[1]
+            )
+        except ValueError:
             return
 
-        if user.id != owner_id or query.message is None:
+        if user.id != owner_id or not query.message:
             return
 
         message_id = query.message.message_id
+
         try:
             await query.message.delete()
         except TelegramError:
             return
 
         untrack_message(message_id)
+
         active = data["active"].get(user_id)
+
         if active and active.get("message_id") == message_id:
             data["active"].pop(user_id, None)
             save_data()
+
         return
 
-    # حذف درخواست قبلی از طریق دکمه هشدار
+    # حذف درخواست قبلی از طریق هشدار
     if query.data.startswith("remove:"):
+
         try:
             _, owner_text, message_text = query.data.split(":", 2)
+
             owner_id = int(owner_text)
             message_id = int(message_text)
-        except (ValueError, IndexError):
+
+        except ValueError:
             return
 
         if user.id != owner_id:
             return
 
         active = data["active"].get(user_id)
+
         if active and active.get("message_id") == message_id:
+
             try:
                 await context.bot.delete_message(
-                    chat_id=GROUP_ID, message_id=message_id
+                    chat_id=GROUP_ID,
+                    message_id=message_id,
                 )
             except TelegramError:
                 pass
+
             untrack_message(message_id)
+
             data["active"].pop(user_id, None)
             save_data()
 
         if query.message:
+
             try:
                 await query.message.delete()
             except TelegramError:
                 pass
+
             untrack_message(query.message.message_id)
+
         return
 
+    # بررسی نوع درخواست
     if query.data not in OPTIONS:
         return
 
     request_text = OPTIONS[query.data]
-    now = current_iran_time()
+
+    now = current_time()
     today = now.date().isoformat()
 
     # محدودیت ۱۵ دقیقه‌ای
     cooldown_value = data["cooldowns"].get(user_id)
+
     if cooldown_value:
+
         try:
-            cooldown_until = datetime.fromisoformat(cooldown_value)
+            cooldown_until = datetime.fromisoformat(
+                cooldown_value
+            )
+
             if now < cooldown_until:
-                seconds_left = int((cooldown_until - now).total_seconds())
-                minutes_left = max(1, (seconds_left + 59) // 60)
+
+                seconds_left = int(
+                    (cooldown_until - now).total_seconds()
+                )
+
+                minutes_left = max(
+                    1,
+                    (seconds_left + 59) // 60,
+                )
+
                 await send_temporary_warning(
                     context,
-                    f"⏳ لطفاً {minutes_left} دقیقه دیگر صبر کنید؛ "
-                    "بعد از ثبت هر درخواست باید ۱۵ دقیقه برای درخواست بعدی صبر کنید.",
+                    f"⏳ لطفاً {minutes_left} دقیقه دیگر صبر کنید.",
                     user.id,
                 )
+
                 return
+
         except ValueError:
             data["cooldowns"].pop(user_id, None)
 
     # هر کاربر در هر روز فقط یک درخواست فعال
     active = data["active"].get(user_id)
+
     if active and active.get("date") == today:
+
         await send_temporary_warning(
             context,
             "⚠️ شما امروز یک درخواست ثبت کرده‌اید.\n"
-            "برای ثبت درخواست جدید، ابتدا درخواست قبلی خود را حذف کنید.",
+            "برای ثبت درخواست جدید، ابتدا درخواست قبلی را حذف کنید.",
             user.id,
             active,
         )
+
         return
 
     # تاریخ شمسی
-    jalali = jdatetime.datetime.fromgregorian(datetime=now)
+    jalali = jdatetime.datetime.fromgregorian(
+        datetime=now
+    )
+
     weekdays = {
         0: "دوشنبه",
         1: "سه‌شنبه",
@@ -440,17 +569,30 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         5: "شنبه",
         6: "یکشنبه",
     }
+
     months = {
-        1: "فروردین", 2: "اردیبهشت", 3: "خرداد", 4: "تیر",
-        5: "مرداد", 6: "شهریور", 7: "مهر", 8: "آبان",
-        9: "آذر", 10: "دی", 11: "بهمن", 12: "اسفند",
+        1: "فروردین",
+        2: "اردیبهشت",
+        3: "خرداد",
+        4: "تیر",
+        5: "مرداد",
+        6: "شهریور",
+        7: "مهر",
+        8: "آبان",
+        9: "آذر",
+        10: "دی",
+        11: "بهمن",
+        12: "اسفند",
     }
+
     date_text = (
         f"{weekdays[jalali.togregorian().weekday()]}، "
         f"{jalali.day} {months[jalali.month]} {jalali.year}"
     )
+
     time_text = now.strftime("%H:%M:%S")
-    name = html_escape(user.full_name)
+
+    name = escape(user.full_name)
 
     message_text = (
         f'<a href="tg://user?id={user.id}">{name}</a>\n'
@@ -458,8 +600,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📅 {date_text}\n"
         f"⏰ ساعت ایران: {time_text}"
     )
+
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🗑 حذف پیام", callback_data=f"delete:{user.id}")
+        InlineKeyboardButton(
+            "🗑 حذف پیام",
+            callback_data=f"delete:{user.id}",
+        )
     ]])
 
     sent = await context.bot.send_message(
@@ -468,73 +614,78 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
         reply_markup=keyboard,
     )
+
     track_message(sent.message_id)
 
     data["active"][user_id] = {
         "message_id": sent.message_id,
         "date": today,
     }
+
     data["cooldowns"][user_id] = (
         now + timedelta(minutes=COOLDOWN_MINUTES)
     ).isoformat()
+
     save_data()
 
 
-def html_escape(value):
-    return (
-        value.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-    )
-
-
-# ---------------- راه‌اندازی و خاموشی ----------------
+# ---------------- راه‌اندازی ربات ----------------
 
 async def post_init(app):
-    await notify_admin(app, "🟡 ربات در حال راه‌اندازی است...")
+    global BOT_CONNECTION_STATUS
 
-    # ارسال یا به‌روزرسانی پنل؛ تلاش مجدد در صورت خطای موقت
-    while True:
-        try:
-            await send_panel(app)
-            await notify_admin(app, "🟢 پنل با موفقیت وصل و آماده استفاده است.")
-            await notify_admin(app, "🟢 ربات وصل شد و آماده فعالیت است.")
-            break
-        except Exception:
-            logging.exception("خطا در ارسال پنل؛ تلاش مجدد تا ۳۰ ثانیه دیگر.")
-            await notify_admin(
-                app,
-                "🔴 پنل ارسال نشد؛ ربات ۳۰ ثانیه دیگر دوباره تلاش می‌کند.",
-            )
-            await asyncio.sleep(30)
+    BOT_CONNECTION_STATUS = "در حال راه‌اندازی"
 
+    # پیام شروع فقط برای مدیر
+    await notify_admin(
+        app,
+        "🟡 ربات در حال راه‌اندازی است."
+    )
+
+    try:
+        # بررسی اتصال واقعی به تلگرام
+        await app.bot.get_me()
+
+        BOT_CONNECTION_STATUS = "وصل"
+
+        await notify_admin(
+            app,
+            "🟢 ربات وصل شد؛ وضعیت ربات وصل است."
+        )
+
+    except Exception:
+        BOT_CONNECTION_STATUS = "قطع"
+
+        logging.exception("اتصال اولیه به تلگرام ناموفق بود.")
+
+        await notify_admin(
+            app,
+            "🔴 اتصال اولیه برقرار نشد؛ "
+            "ربات در حال تلاش برای اتصال مجدد است."
+        )
+
+    # اجرای زمان‌بندی‌ها و بررسی اتصال
     app.create_task(midnight_scheduler(app))
     app.create_task(reminder_scheduler(app))
     app.create_task(connection_monitor(app))
 
 
 async def post_shutdown(app):
-    await notify_admin(app, "🔴 ربات در حال خاموش شدن است.")
+    logging.info("ربات در حال خاموش شدن است.")
 
 
-async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+async def on_error(update, context):
     logging.error(
-        "خطا هنگام پردازش درخواست تلگرام:",
+        "خطای ربات:",
         exc_info=context.error,
     )
-    # خطاهای عادی هندلر لزوماً به معنی قطع‌شدن کل ربات نیستند.
-    if isinstance(context.error, NetworkError):
-        await notify_admin(
-            context.application,
-            "⚠️ خطای شبکه رخ داده؛ ربات برای ادامه ارتباط تلاش می‌کند.",
-        )
 
 
-# ---------------- اجرای برنامه ----------------
+# ---------------- اجرای اصلی ----------------
 
 def main():
-    # وب‌سرور سلامت Render در یک Thread جداگانه اجرا می‌شود.
+
+    # وب‌سرور Render
     threading.Thread(
         target=start_web_server,
         daemon=True,
@@ -556,11 +707,28 @@ def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button))
+    # دستور شروع پیوی
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    # دکمه وضعیت خصوصی مدیر
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            private_status,
+        )
+    )
+
+    # دکمه‌های پنل پین‌شده قبلی
+    app.add_handler(
+        CallbackQueryHandler(button)
+    )
+
     app.add_error_handler(on_error)
 
-    logging.info("ربات کد غذا در حال راه‌اندازی است.")
+    logging.info("ربات در حال اجرا است.")
+
     app.run_polling(
         bootstrap_retries=-1,
         poll_interval=1,
