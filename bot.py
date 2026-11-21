@@ -46,6 +46,7 @@ IRAN_TZ = ZoneInfo("Asia/Tehran")
 
 COOLDOWN_MINUTES = 15
 WARNING_SECONDS = 10
+AUTH_WARNING_SECONDS = 5
 HEALTH_CHECK_SECONDS = 30
 
 BOT_CONNECTION_STATUS = "در حال راه‌اندازی"
@@ -72,8 +73,6 @@ def load_data():
     result.setdefault("bot_messages", [])
     result.setdefault("panel_message_id", None)
     result.setdefault("reminder_message_id", None)
-
-    # اطلاعات احراز هویت
     result.setdefault("verified", {})
     result.setdefault("phone_to_user", {})
 
@@ -119,10 +118,8 @@ def normalize_phone(phone):
 
     if digits.startswith("0098"):
         digits = digits[2:]
-
     elif digits.startswith("0") and len(digits) == 11:
         digits = "98" + digits[1:]
-
     elif len(digits) == 10 and digits.startswith("9"):
         digits = "98" + digits
 
@@ -133,7 +130,7 @@ def is_verified(user_id):
     return str(user_id) in data["verified"]
 
 
-# ---------------- پیام وضعیت مدیر ----------------
+# ---------------- پیام مدیر ----------------
 
 async def notify_admin(app, message):
     try:
@@ -154,7 +151,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or not message:
         return
 
-    # ورود برای احراز هویت
     if context.args and context.args[0] == "verify":
 
         if is_verified(user.id):
@@ -183,9 +179,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # پنل خصوصی مدیر
     if user.id == ADMIN_ID:
-
         keyboard = ReplyKeyboardMarkup(
             [["📡 وضعیت ربات"]],
             resize_keyboard=True,
@@ -216,10 +210,7 @@ async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     message = update.effective_message
 
-    if not user or not message:
-        return
-
-    if user.id != ADMIN_ID:
+    if not user or not message or user.id != ADMIN_ID:
         return
 
     if message.text != "📡 وضعیت ربات":
@@ -227,10 +218,8 @@ async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if BOT_CONNECTION_STATUS == "وصل":
         text = "🟢 وضعیت ربات: وصل است."
-
     elif BOT_CONNECTION_STATUS == "قطع":
         text = "🔴 وضعیت ربات: قطع است."
-
     else:
         text = "🟡 وضعیت ربات: در حال راه‌اندازی است."
 
@@ -240,7 +229,6 @@ async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- احراز هویت کاربران ----------------
 
 async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     user = update.effective_user
     message = update.effective_message
 
@@ -252,9 +240,7 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     contact = message.contact
 
-    # بررسی اینکه مخاطب متعلق به خود کاربر باشد
     if not contact.user_id or contact.user_id != user.id:
-
         await message.reply_text(
             "❌ این مخاطب متعلق به حساب تلگرام شما نیست.\n"
             "لطفاً مخاطب خودتان را ارسال کنید."
@@ -270,12 +256,9 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_key = str(user.id)
-
-    # بررسی تکراری نبودن شماره
     owner_id = data["phone_to_user"].get(phone)
 
     if owner_id and str(owner_id) != user_key:
-
         await message.reply_text(
             "❌ این شماره قبلاً برای حساب تلگرام دیگری ثبت شده است.\n"
             "در صورت اشتباه، با مدیر ربات تماس بگیرید.",
@@ -290,7 +273,6 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # حذف اتصال شماره قبلی همین کاربر، در صورت تغییر
     old_record = data["verified"].get(user_key)
 
     if old_record:
@@ -299,7 +281,6 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if old_phone and data["phone_to_user"].get(old_phone) == user_key:
             data["phone_to_user"].pop(old_phone, None)
 
-    # ذخیره احراز هویت
     data["verified"][user_key] = {
         "phone": phone,
         "verified_at": current_time().isoformat(),
@@ -308,7 +289,6 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     data["phone_to_user"][phone] = user_key
-
     save_data()
 
     await message.reply_text(
@@ -318,7 +298,6 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardRemove(),
     )
 
-    # ارسال اطلاعات به مدیر
     await notify_admin(
         context.application,
         "🟢 کاربر جدید احراز هویت شد\n\n"
@@ -375,8 +354,8 @@ OPTIONS = {
 
 # ---------------- پیام‌های موقت ----------------
 
-async def delete_later(message):
-    await asyncio.sleep(WARNING_SECONDS)
+async def delete_later(message, seconds=WARNING_SECONDS):
+    await asyncio.sleep(seconds)
 
     try:
         await message.delete()
@@ -386,22 +365,14 @@ async def delete_later(message):
     untrack_message(message.message_id)
 
 
-async def send_temporary_warning(
-    context,
-    text,
-    user_id,
-    previous=None,
-):
-
+async def send_temporary_warning(context, text, user_id, previous=None):
     keyboard = None
 
     if previous:
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton(
                 "🗑 حذف درخواست قبلی",
-                callback_data=(
-                    f"remove:{user_id}:{previous['message_id']}"
-                ),
+                callback_data=f"remove:{user_id}:{previous['message_id']}",
             )
         ]])
 
@@ -412,16 +383,13 @@ async def send_temporary_warning(
     )
 
     track_message(msg.message_id)
-
     context.application.create_task(delete_later(msg))
 
 
 # ---------------- پیام احراز هویت در گروه ----------------
 
 async def send_verification_warning(context, user):
-
     me = await context.bot.get_me()
-
     verify_url = f"https://t.me/{me.username}?start=verify"
 
     keyboard = InlineKeyboardMarkup([[
@@ -445,17 +413,20 @@ async def send_verification_warning(context, user):
 
     track_message(msg.message_id)
 
+    # حذف پیام احراز هویت بعد از ۵ ثانیه
+    context.application.create_task(
+        delete_later(msg, AUTH_WARNING_SECONDS)
+    )
+
 
 # ---------------- پاک‌سازی نیمه‌شب ----------------
 
 async def midnight_cleanup(app):
-
     logging.info("شروع پاک‌سازی نیمه‌شب")
 
     panel_id = data.get("panel_message_id")
 
     for message_id in list(data["bot_messages"]):
-
         if message_id == panel_id:
             continue
 
@@ -464,31 +435,23 @@ async def midnight_cleanup(app):
                 chat_id=GROUP_ID,
                 message_id=message_id,
             )
-
         except TelegramError:
             logging.warning(
                 "حذف پیام %s ناموفق بود.",
                 message_id,
             )
 
-    data["bot_messages"] = (
-        [panel_id] if panel_id else []
-    )
-
+    data["bot_messages"] = [panel_id] if panel_id else []
     data["active"] = {}
     data["cooldowns"] = {}
     data["reminder_message_id"] = None
 
-    # اطلاعات احراز هویت پاک نمی‌شود.
     save_data()
-
     logging.info("پاک‌سازی نیمه‌شب تمام شد.")
 
 
 async def midnight_scheduler(app):
-
     while True:
-
         now = current_time()
 
         next_midnight = (
@@ -501,12 +464,10 @@ async def midnight_scheduler(app):
         )
 
         seconds = (next_midnight - now).total_seconds()
-
         await asyncio.sleep(max(1, seconds))
 
         try:
             await midnight_cleanup(app)
-
         except Exception:
             logging.exception("خطا در پاک‌سازی نیمه‌شب")
 
@@ -514,9 +475,7 @@ async def midnight_scheduler(app):
 # ---------------- یادآوری چهارشنبه ----------------
 
 def next_wednesday_reminder():
-
     now = current_time()
-
     days = (2 - now.weekday()) % 7
 
     target = (
@@ -535,35 +494,26 @@ def next_wednesday_reminder():
 
 
 async def send_reminder(app):
-
     msg = await app.bot.send_message(
         chat_id=GROUP_ID,
         text="🍽 کد غذا رزرو کنید یادتون نره 😉",
     )
 
     data["reminder_message_id"] = msg.message_id
-
     track_message(msg.message_id)
     save_data()
 
 
 async def reminder_scheduler(app):
-
     while True:
-
         target = next_wednesday_reminder()
-
-        seconds = (
-            target - current_time()
-        ).total_seconds()
+        seconds = (target - current_time()).total_seconds()
 
         await asyncio.sleep(max(1, seconds))
 
         try:
             await send_reminder(app)
-
             logging.info("یادآوری چهارشنبه ارسال شد.")
-
         except Exception:
             logging.exception("ارسال یادآوری ناموفق بود.")
 
@@ -571,18 +521,15 @@ async def reminder_scheduler(app):
 # ---------------- بررسی اتصال تلگرام ----------------
 
 async def connection_monitor(app):
-
     global BOT_CONNECTION_STATUS
 
     while True:
-
         await asyncio.sleep(HEALTH_CHECK_SECONDS)
 
         try:
             await app.bot.get_me()
 
             if BOT_CONNECTION_STATUS != "وصل":
-
                 BOT_CONNECTION_STATUS = "وصل"
 
                 await notify_admin(
@@ -591,11 +538,9 @@ async def connection_monitor(app):
                 )
 
         except Exception:
-
             logging.exception("بررسی اتصال تلگرام ناموفق بود.")
 
             if BOT_CONNECTION_STATUS != "قطع":
-
                 BOT_CONNECTION_STATUS = "قطع"
 
                 await notify_admin(
@@ -607,7 +552,6 @@ async def connection_monitor(app):
 # ---------------- مدیریت دکمه‌های پنل ----------------
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
     query = update.callback_query
 
     if not query or not query.from_user:
@@ -623,11 +567,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # حذف درخواست توسط صاحب درخواست
     if query.data.startswith("delete:"):
-
         try:
-            owner_id = int(
-                query.data.split(":", 1)[1]
-            )
+            owner_id = int(query.data.split(":", 1)[1])
         except ValueError:
             return
 
@@ -653,13 +594,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # حذف درخواست قبلی از طریق هشدار
     if query.data.startswith("remove:"):
-
         try:
             _, owner_text, message_text = query.data.split(":", 2)
-
             owner_id = int(owner_text)
             message_id = int(message_text)
-
         except ValueError:
             return
 
@@ -669,7 +607,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         active = data["active"].get(user_id)
 
         if active and active.get("message_id") == message_id:
-
             try:
                 await context.bot.delete_message(
                     chat_id=GROUP_ID,
@@ -679,12 +616,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
             untrack_message(message_id)
-
             data["active"].pop(user_id, None)
             save_data()
 
         if query.message:
-
             try:
                 await query.message.delete()
             except TelegramError:
@@ -694,13 +629,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # بررسی نوع درخواست
     if query.data not in OPTIONS:
         return
 
-    # بررسی احراز هویت
+    # احراز هویت قبل از ثبت درخواست
     if not is_verified(user.id):
-
         try:
             await send_verification_warning(context, user)
         except TelegramError:
@@ -709,7 +642,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     request_text = OPTIONS[query.data]
-
     now = current_time()
     today = now.date().isoformat()
 
@@ -717,14 +649,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cooldown_value = data["cooldowns"].get(user_id)
 
     if cooldown_value:
-
         try:
-            cooldown_until = datetime.fromisoformat(
-                cooldown_value
-            )
+            cooldown_until = datetime.fromisoformat(cooldown_value)
 
             if now < cooldown_until:
-
                 seconds_left = int(
                     (cooldown_until - now).total_seconds()
                 )
@@ -749,7 +677,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active = data["active"].get(user_id)
 
     if active and active.get("date") == today:
-
         await send_temporary_warning(
             context,
             "⚠️ شما امروز یک درخواست ثبت کرده‌اید.\n"
@@ -761,9 +688,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # تاریخ شمسی
-    jalali = jdatetime.datetime.fromgregorian(
-        datetime=now
-    )
+    jalali = jdatetime.datetime.fromgregorian(datetime=now)
 
     weekdays = {
         0: "دوشنبه",
@@ -796,7 +721,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     time_text = now.strftime("%H:%M:%S")
-
     name = escape(user.full_name)
 
     message_text = (
@@ -838,7 +762,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- راه‌اندازی ربات ----------------
 
 async def post_init(app):
-
     global BOT_CONNECTION_STATUS
 
     BOT_CONNECTION_STATUS = "در حال راه‌اندازی"
@@ -859,7 +782,6 @@ async def post_init(app):
         )
 
     except Exception:
-
         BOT_CONNECTION_STATUS = "قطع"
 
         logging.exception("اتصال اولیه به تلگرام ناموفق بود.")
@@ -889,7 +811,6 @@ async def on_error(update, context):
 # ---------------- اجرای اصلی ----------------
 
 def main():
-
     threading.Thread(
         target=start_web_server,
         daemon=True,
@@ -915,7 +836,6 @@ def main():
         CommandHandler("start", start)
     )
 
-    # دریافت مخاطب
     app.add_handler(
         MessageHandler(
             filters.CONTACT,
@@ -923,7 +843,6 @@ def main():
         )
     )
 
-    # وضعیت خصوصی مدیر
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -931,7 +850,6 @@ def main():
         )
     )
 
-    # دکمه‌های پنل گروه
     app.add_handler(
         CallbackQueryHandler(button)
     )
