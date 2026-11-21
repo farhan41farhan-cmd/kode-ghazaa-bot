@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import logging
@@ -13,7 +12,9 @@ import jdatetime
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
     Update,
 )
 from telegram.error import TelegramError
@@ -72,6 +73,10 @@ def load_data():
     result.setdefault("panel_message_id", None)
     result.setdefault("reminder_message_id", None)
 
+    # اطلاعات احراز هویت
+    result.setdefault("verified", {})
+    result.setdefault("phone_to_user", {})
+
     return result
 
 
@@ -103,6 +108,31 @@ def untrack_message(message_id):
         save_data()
 
 
+def normalize_phone(phone):
+    translation = str.maketrans(
+        "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
+        "01234567890123456789",
+    )
+
+    phone = str(phone).translate(translation)
+    digits = "".join(ch for ch in phone if ch.isdigit())
+
+    if digits.startswith("0098"):
+        digits = digits[2:]
+
+    elif digits.startswith("0") and len(digits) == 11:
+        digits = "98" + digits[1:]
+
+    elif len(digits) == 10 and digits.startswith("9"):
+        digits = "98" + digits
+
+    return digits
+
+
+def is_verified(user_id):
+    return str(user_id) in data["verified"]
+
+
 # ---------------- پیام وضعیت مدیر ----------------
 
 async def notify_admin(app, message):
@@ -112,10 +142,10 @@ async def notify_admin(app, message):
             text=message,
         )
     except TelegramError:
-        logging.exception("ارسال پیام وضعیت به مدیر ناموفق بود.")
+        logging.exception("ارسال پیام به مدیر ناموفق بود.")
 
 
-# ---------------- شروع ربات در پیوی ----------------
+# ---------------- شروع ربات ----------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -124,28 +154,65 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or not message:
         return
 
-    # فقط مدیر اجازه استفاده از پنل خصوصی را دارد.
-    if user.id != ADMIN_ID:
-        await message.reply_text("⛔ شما اجازه دسترسی به این بخش را ندارید.")
+    # ورود برای احراز هویت
+    if context.args and context.args[0] == "verify":
+
+        if is_verified(user.id):
+            await message.reply_text(
+                "✅ احراز هویت شما قبلاً انجام شده است.\n"
+                "🟢 وضعیت حساب: احراز هویت شده",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+
+        keyboard = ReplyKeyboardMarkup(
+            [[
+                KeyboardButton(
+                    "🟢 تأیید و احراز هویت",
+                    request_contact=True,
+                )
+            ]],
+            resize_keyboard=True,
+            one_time_keyboard=True,
+        )
+
+        await message.reply_text(
+            "برای تکمیل احراز هویت، دکمه زیر را بزنید.\n\n"
+            "⚠️ فقط مخاطب متعلق به همین حساب تلگرام پذیرفته می‌شود.",
+            reply_markup=keyboard,
+        )
         return
 
-    keyboard = ReplyKeyboardMarkup(
-        [["📡 وضعیت ربات"]],
-        resize_keyboard=True,
-    )
+    # پنل خصوصی مدیر
+    if user.id == ADMIN_ID:
 
-    await message.reply_text(
-        "سلام مدیر عزیز ❤️\n\n"
-        "به پنل وضعیت ربات خوش آمدی.\n"
-        "برای مشاهده وضعیت اتصال، دکمه زیر را بزن.",
-        reply_markup=keyboard,
-    )
+        keyboard = ReplyKeyboardMarkup(
+            [["📡 وضعیت ربات"]],
+            resize_keyboard=True,
+        )
+
+        await message.reply_text(
+            "سلام مدیر عزیز ❤️\n\n"
+            "به پنل وضعیت ربات خوش آمدی.\n"
+            "برای مشاهده وضعیت اتصال، دکمه زیر را بزن.",
+            reply_markup=keyboard,
+        )
+        return
+
+    if is_verified(user.id):
+        await message.reply_text(
+            "سلام ❤️\n"
+            "🟢 وضعیت حساب شما: احراز هویت شده"
+        )
+    else:
+        await message.reply_text(
+            "سلام ❤️\n"
+            "برای ثبت درخواست خرید یا فروش در گروه، "
+            "ابتدا باید احراز هویت کنید."
+        )
 
 
-async def private_status(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
+async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     message = update.effective_message
 
@@ -168,6 +235,99 @@ async def private_status(
         text = "🟡 وضعیت ربات: در حال راه‌اندازی است."
 
     await message.reply_text(text)
+
+
+# ---------------- احراز هویت کاربران ----------------
+
+async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user = update.effective_user
+    message = update.effective_message
+
+    if not user or not message or not message.contact:
+        return
+
+    if update.effective_chat.type != "private":
+        return
+
+    contact = message.contact
+
+    # بررسی اینکه مخاطب متعلق به خود کاربر باشد
+    if not contact.user_id or contact.user_id != user.id:
+
+        await message.reply_text(
+            "❌ این مخاطب متعلق به حساب تلگرام شما نیست.\n"
+            "لطفاً مخاطب خودتان را ارسال کنید."
+        )
+        return
+
+    phone = normalize_phone(contact.phone_number)
+
+    if not phone:
+        await message.reply_text(
+            "❌ دریافت اطلاعات مخاطب ناموفق بود."
+        )
+        return
+
+    user_key = str(user.id)
+
+    # بررسی تکراری نبودن شماره
+    owner_id = data["phone_to_user"].get(phone)
+
+    if owner_id and str(owner_id) != user_key:
+
+        await message.reply_text(
+            "❌ این شماره قبلاً برای حساب تلگرام دیگری ثبت شده است.\n"
+            "در صورت اشتباه، با مدیر ربات تماس بگیرید.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+        await notify_admin(
+            context.application,
+            "⚠️ تلاش برای ثبت شماره تکراری\n\n"
+            f"نام: {escape(user.full_name)}\n"
+            f"آیدی تلگرام: {user.id}"
+        )
+        return
+
+    # حذف اتصال شماره قبلی همین کاربر، در صورت تغییر
+    old_record = data["verified"].get(user_key)
+
+    if old_record:
+        old_phone = old_record.get("phone")
+
+        if old_phone and data["phone_to_user"].get(old_phone) == user_key:
+            data["phone_to_user"].pop(old_phone, None)
+
+    # ذخیره احراز هویت
+    data["verified"][user_key] = {
+        "phone": phone,
+        "verified_at": current_time().isoformat(),
+        "name": user.full_name,
+        "username": user.username or "",
+    }
+
+    data["phone_to_user"][phone] = user_key
+
+    save_data()
+
+    await message.reply_text(
+        "✅ احراز هویت شما با موفقیت انجام شد.\n\n"
+        "اکنون می‌توانید از امکانات ربات کد غذا استفاده کنید.\n"
+        "🟢 وضعیت حساب: احراز هویت شده",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+    # ارسال اطلاعات به مدیر
+    await notify_admin(
+        context.application,
+        "🟢 کاربر جدید احراز هویت شد\n\n"
+        f"نام: {escape(user.full_name)}\n"
+        f"نام کاربری: @{user.username if user.username else 'ندارد'}\n"
+        f"آیدی تلگرام: {user.id}\n"
+        f"شماره تماس: +{phone}\n"
+        f"زمان: {current_time().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
 
 
 # ---------------- وب‌سرور Render ----------------
@@ -197,9 +357,6 @@ def start_web_server():
 
 
 # ---------------- دکمه‌های پنل گروه ----------------
-
-# این callbackها برای پنل پین‌شده قبلی هستند.
-# این کد هیچ پنل جدیدی ارسال یا ویرایش نمی‌کند.
 
 OPTIONS = {
     "najaf_sell": "🟢 کد ناهار نجف می‌فروشم",
@@ -235,6 +392,7 @@ async def send_temporary_warning(
     user_id,
     previous=None,
 ):
+
     keyboard = None
 
     if previous:
@@ -258,16 +416,46 @@ async def send_temporary_warning(
     context.application.create_task(delete_later(msg))
 
 
+# ---------------- پیام احراز هویت در گروه ----------------
+
+async def send_verification_warning(context, user):
+
+    me = await context.bot.get_me()
+
+    verify_url = f"https://t.me/{me.username}?start=verify"
+
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "🔐 ورود به ربات و احراز هویت",
+            url=verify_url,
+        )
+    ]])
+
+    msg = await context.bot.send_message(
+        chat_id=GROUP_ID,
+        text=(
+            f"🔒 {escape(user.full_name)} عزیز،\n"
+            "برای ثبت درخواست خرید یا فروش، "
+            "ابتدا باید احراز هویت کنید.\n"
+            "لطفاً از دکمه زیر وارد پیوی ربات شوید."
+        ),
+        reply_markup=keyboard,
+        parse_mode="HTML",
+    )
+
+    track_message(msg.message_id)
+
+
 # ---------------- پاک‌سازی نیمه‌شب ----------------
 
 async def midnight_cleanup(app):
+
     logging.info("شروع پاک‌سازی نیمه‌شب")
 
     panel_id = data.get("panel_message_id")
 
     for message_id in list(data["bot_messages"]):
 
-        # پنل پین‌شده قبلی حذف نمی‌شود.
         if message_id == panel_id:
             continue
 
@@ -276,6 +464,7 @@ async def midnight_cleanup(app):
                 chat_id=GROUP_ID,
                 message_id=message_id,
             )
+
         except TelegramError:
             logging.warning(
                 "حذف پیام %s ناموفق بود.",
@@ -290,13 +479,16 @@ async def midnight_cleanup(app):
     data["cooldowns"] = {}
     data["reminder_message_id"] = None
 
+    # اطلاعات احراز هویت پاک نمی‌شود.
     save_data()
 
     logging.info("پاک‌سازی نیمه‌شب تمام شد.")
 
 
 async def midnight_scheduler(app):
+
     while True:
+
         now = current_time()
 
         next_midnight = (
@@ -319,12 +511,12 @@ async def midnight_scheduler(app):
             logging.exception("خطا در پاک‌سازی نیمه‌شب")
 
 
-# ---------------- یادآوری چهارشنبه ساعت ۰۰:۰۱ ----------------
+# ---------------- یادآوری چهارشنبه ----------------
 
 def next_wednesday_reminder():
+
     now = current_time()
 
-    # چهارشنبه در weekday پایتون عدد ۲ است.
     days = (2 - now.weekday()) % 7
 
     target = (
@@ -343,6 +535,7 @@ def next_wednesday_reminder():
 
 
 async def send_reminder(app):
+
     msg = await app.bot.send_message(
         chat_id=GROUP_ID,
         text="🍽 کد غذا رزرو کنید یادتون نره 😉",
@@ -355,7 +548,9 @@ async def send_reminder(app):
 
 
 async def reminder_scheduler(app):
+
     while True:
+
         target = next_wednesday_reminder()
 
         seconds = (
@@ -376,15 +571,16 @@ async def reminder_scheduler(app):
 # ---------------- بررسی اتصال تلگرام ----------------
 
 async def connection_monitor(app):
+
     global BOT_CONNECTION_STATUS
 
     while True:
+
         await asyncio.sleep(HEALTH_CHECK_SECONDS)
 
         try:
             await app.bot.get_me()
 
-            # اگر قبلاً قطع بوده، پیام وصل‌شدن ارسال شود.
             if BOT_CONNECTION_STATUS != "وصل":
 
                 BOT_CONNECTION_STATUS = "وصل"
@@ -395,6 +591,7 @@ async def connection_monitor(app):
                 )
 
         except Exception:
+
             logging.exception("بررسی اتصال تلگرام ناموفق بود.")
 
             if BOT_CONNECTION_STATUS != "قطع":
@@ -407,12 +604,10 @@ async def connection_monitor(app):
                 )
 
 
-# ---------------- مدیریت دکمه‌های پنل قبلی ----------------
+# ---------------- مدیریت دکمه‌های پنل ----------------
 
-async def button(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-):
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     query = update.callback_query
 
     if not query or not query.from_user:
@@ -501,6 +696,16 @@ async def button(
 
     # بررسی نوع درخواست
     if query.data not in OPTIONS:
+        return
+
+    # بررسی احراز هویت
+    if not is_verified(user.id):
+
+        try:
+            await send_verification_warning(context, user)
+        except TelegramError:
+            logging.exception("ارسال پیام احراز هویت ناموفق بود.")
+
         return
 
     request_text = OPTIONS[query.data]
@@ -596,7 +801,8 @@ async def button(
 
     message_text = (
         f'<a href="tg://user?id={user.id}">{name}</a>\n'
-        f"{request_text}\n\n"
+        f"{request_text}\n"
+        "🟢 احراز هویت شده\n\n"
         f"📅 {date_text}\n"
         f"⏰ ساعت ایران: {time_text}"
     )
@@ -632,18 +838,17 @@ async def button(
 # ---------------- راه‌اندازی ربات ----------------
 
 async def post_init(app):
+
     global BOT_CONNECTION_STATUS
 
     BOT_CONNECTION_STATUS = "در حال راه‌اندازی"
 
-    # پیام شروع فقط برای مدیر
     await notify_admin(
         app,
         "🟡 ربات در حال راه‌اندازی است."
     )
 
     try:
-        # بررسی اتصال واقعی به تلگرام
         await app.bot.get_me()
 
         BOT_CONNECTION_STATUS = "وصل"
@@ -654,6 +859,7 @@ async def post_init(app):
         )
 
     except Exception:
+
         BOT_CONNECTION_STATUS = "قطع"
 
         logging.exception("اتصال اولیه به تلگرام ناموفق بود.")
@@ -664,7 +870,6 @@ async def post_init(app):
             "ربات در حال تلاش برای اتصال مجدد است."
         )
 
-    # اجرای زمان‌بندی‌ها و بررسی اتصال
     app.create_task(midnight_scheduler(app))
     app.create_task(reminder_scheduler(app))
     app.create_task(connection_monitor(app))
@@ -685,7 +890,6 @@ async def on_error(update, context):
 
 def main():
 
-    # وب‌سرور Render
     threading.Thread(
         target=start_web_server,
         daemon=True,
@@ -707,12 +911,19 @@ def main():
         .build()
     )
 
-    # دستور شروع پیوی
     app.add_handler(
         CommandHandler("start", start)
     )
 
-    # دکمه وضعیت خصوصی مدیر
+    # دریافت مخاطب
+    app.add_handler(
+        MessageHandler(
+            filters.CONTACT,
+            receive_contact,
+        )
+    )
+
+    # وضعیت خصوصی مدیر
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
@@ -720,7 +931,7 @@ def main():
         )
     )
 
-    # دکمه‌های پنل پین‌شده قبلی
+    # دکمه‌های پنل گروه
     app.add_handler(
         CallbackQueryHandler(button)
     )
