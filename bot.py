@@ -173,7 +173,7 @@ PRE_VERIFIED_USER_IDS = {
     5857555549,
     7719542934,
 
-    # کاربران جدید
+    # کاربران جدید قبلی
     5853341700,
     7544808044,
     7464516390,
@@ -205,6 +205,21 @@ PRE_VERIFIED_USER_IDS = {
     300190909,
     5494910780,
     7312560170,
+
+    # ۱۳ کاربر جدید
+    5986180990,
+    6363794058,
+    384481559,
+    8017846671,
+    8428148031,
+    8928181453,
+    8863833504,
+    6862647875,
+    7465305978,
+    1013872200,
+    8954891685,
+    6884766762,
+    5771501111,
 }
 
 
@@ -558,30 +573,45 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- پنل اصلی ----------------
 
 async def send_panel(app):
-    # اگر پنل قبلاً ارسال شده باشد، دوباره ارسال نمی‌شود
-
-    if data.get("panel_message_id"):
-        logging.info("پنل قبلاً ارسال شده است.")
-        return
-
     keyboard = []
+
+    # هر گزینه در یک ردیف جداگانه؛ بدون دکمه فردا
 
     for key, title in OPTIONS.items():
         keyboard.append([
             InlineKeyboardButton(
                 title,
                 callback_data=f"opt:{key}:today",
-            ),
-            InlineKeyboardButton(
-                "فردا",
-                callback_data=f"opt:{key}:tomorrow",
-            ),
+            )
         ])
+
+    markup = InlineKeyboardMarkup(keyboard)
+
+    panel_id = data.get("panel_message_id")
+
+    # اگر پنل قبلی وجود دارد، همان را به‌روزرسانی می‌کنیم
+
+    if panel_id:
+        try:
+            await app.bot.edit_message_text(
+                chat_id=GROUP_ID,
+                message_id=panel_id,
+                text="🍽 کد غذا\n\nیکی از گزینه‌های زیر را انتخاب کنید:",
+                reply_markup=markup,
+            )
+
+            logging.info("پنل قبلی به‌روزرسانی شد.")
+            return
+
+        except TelegramError:
+            logging.warning(
+                "به‌روزرسانی پنل قبلی ناموفق بود؛ پنل جدید ارسال می‌شود."
+            )
 
     msg = await app.bot.send_message(
         chat_id=GROUP_ID,
         text="🍽 کد غذا\n\nیکی از گزینه‌های زیر را انتخاب کنید:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=markup,
     )
 
     data["panel_message_id"] = msg.message_id
@@ -710,8 +740,6 @@ async def midnight_cleanup(app):
 
     today = current_time().date().isoformat()
 
-    # نگه داشتن درخواست‌های امروز و روزهای آینده
-
     preserved_active = {}
 
     for key, record in list(data["active"].items()):
@@ -723,8 +751,6 @@ async def midnight_cleanup(app):
         if record_date and record_date >= today:
             preserved_active[key] = record
 
-    # شناسه پیام‌های درخواست‌های معتبر
-
     preserved_ids = {
         record.get("message_id")
         for record in preserved_active.values()
@@ -732,8 +758,6 @@ async def midnight_cleanup(app):
     }
 
     panel_id = data.get("panel_message_id")
-
-    # حذف پیام‌های موقت و درخواست‌های منقضی‌شده
 
     for message_id in list(data["bot_messages"]):
         if message_id == panel_id:
@@ -755,8 +779,6 @@ async def midnight_cleanup(app):
 
     data["active"] = preserved_active
 
-    # پاک‌سازی محدودیت‌های تاریخ‌های گذشته
-
     new_cooldowns = {}
 
     for key, value in data["cooldowns"].items():
@@ -770,8 +792,6 @@ async def midnight_cleanup(app):
             continue
 
     data["cooldowns"] = new_cooldowns
-
-    # نگه داشتن پنل و درخواست‌های معتبر
 
     data["bot_messages"] = []
 
@@ -1055,9 +1075,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_remove(query, context)
         return
 
-    # تشخیص گزینه و تاریخ
-
-    is_tomorrow = False
+    # تشخیص گزینه
+    # فقط درخواست امروز پذیرفته می‌شود
 
     if query.data.startswith("opt:"):
         try:
@@ -1065,9 +1084,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             return
 
-        if target_type == "tomorrow":
-            is_tomorrow = True
-        elif target_type != "today":
+        if target_type != "today":
             return
 
     else:
@@ -1094,16 +1111,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     now = current_time()
 
-    if is_tomorrow:
-        target_date = (now + timedelta(days=1)).date()
-        target_label = "فردا"
-    else:
-        target_date = now.date()
-        target_label = "امروز"
+    target_date = now.date()
+    target_label = "امروز"
 
     target_date_text = target_date.isoformat()
-
-    # کلید مستقل برای هر کاربر و هر تاریخ
 
     key = request_key(
         user.id,
@@ -1198,11 +1209,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = escape(user.full_name)
 
     # ---------------- متن درخواست ----------------
-    # ترتیب نمایش:
-    # نام گزینه
-    # امروز یا فردا
-    # احراز هویت شده
-    # تاریخ و ساعت
 
     message_text = (
         f'<a href="tg://user?id={user.id}">{name}</a>\n'
@@ -1231,15 +1237,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     track_message(sent.message_id)
 
-    # ثبت درخواست مستقل برای تاریخ انتخاب‌شده
-
     data["active"][key] = {
         "message_id": sent.message_id,
         "date": target_date_text,
         "user_id": user.id,
     }
-
-    # محدودیت مستقل ۱۵ دقیقه‌ای برای همان تاریخ
 
     data["cooldowns"][key] = (
         now + timedelta(minutes=COOLDOWN_MINUTES)
