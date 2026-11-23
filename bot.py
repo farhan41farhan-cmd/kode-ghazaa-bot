@@ -573,6 +573,17 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- پنل اصلی ----------------
 
 async def send_panel(app):
+    panel_id = data.get("panel_message_id")
+
+    # اگر شناسه پنل قبلی موجود نباشد، هیچ پنل جدیدی ارسال نمی‌شود.
+
+    if not panel_id:
+        logging.error(
+            "شناسه پیام پنل قبلی پیدا نشد؛ "
+            "برای جلوگیری از ارسال پنل تکراری، پنل جدید ارسال نمی‌شود."
+        )
+        return
+
     keyboard = []
 
     # هر گزینه در یک ردیف جداگانه؛ بدون دکمه فردا
@@ -587,40 +598,27 @@ async def send_panel(app):
 
     markup = InlineKeyboardMarkup(keyboard)
 
-    panel_id = data.get("panel_message_id")
+    # فقط دکمه‌های همان پیام قبلی تغییر می‌کنند.
+    # متن پیام و پین بودن آن دست‌نخورده باقی می‌ماند.
 
-    # اگر پنل قبلی وجود دارد، همان را به‌روزرسانی می‌کنیم
+    try:
+        await app.bot.edit_message_reply_markup(
+            chat_id=GROUP_ID,
+            message_id=panel_id,
+            reply_markup=markup,
+        )
 
-    if panel_id:
-        try:
-            await app.bot.edit_message_text(
-                chat_id=GROUP_ID,
-                message_id=panel_id,
-                text="🍽 کد غذا\n\nیکی از گزینه‌های زیر را انتخاب کنید:",
-                reply_markup=markup,
-            )
+        logging.info(
+            "دکمه‌های پنل قبلی با موفقیت ویرایش شدند."
+        )
 
-            logging.info("پنل قبلی به‌روزرسانی شد.")
-            return
+    except TelegramError as e:
+        logging.error(
+            "ویرایش دکمه‌های پنل قبلی ناموفق بود: %s",
+            e,
+        )
 
-        except TelegramError:
-            logging.warning(
-                "به‌روزرسانی پنل قبلی ناموفق بود؛ پنل جدید ارسال می‌شود."
-            )
-
-    msg = await app.bot.send_message(
-        chat_id=GROUP_ID,
-        text="🍽 کد غذا\n\nیکی از گزینه‌های زیر را انتخاب کنید:",
-        reply_markup=markup,
-    )
-
-    data["panel_message_id"] = msg.message_id
-
-    track_message(msg.message_id)
-
-    save_data()
-
-    logging.info("پنل اصلی ارسال شد.")
+        # عمداً پنل جدید ارسال نمی‌شود.
 
 
 # ---------------- وب‌سرور Render ----------------
@@ -1266,11 +1264,12 @@ async def post_init(app):
         await send_panel(app)
 
     except Exception:
-        logging.exception("ارسال پنل ناموفق بود.")
+        logging.exception("ویرایش پنل ناموفق بود.")
 
         await notify_admin(
             app,
-            "⚠️ ارسال پنل کد غذا ناموفق بود."
+            "⚠️ ویرایش دکمه‌های پنل قبلی ناموفق بود. "
+            "هیچ پنل جدیدی ارسال نشد."
         )
 
     try:
