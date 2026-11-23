@@ -264,7 +264,6 @@ def load_data():
         result["bot_messages"] = []
 
     # انتقال درخواست‌های نسخه قبلی به ساختار جدید
-    # ساختار جدید: user_id:date
 
     for old_key, record in list(result["active"].items()):
         if old_key.isdigit() and isinstance(record, dict):
@@ -574,7 +573,7 @@ async def send_panel(app):
                 callback_data=f"opt:{key}:today",
             ),
             InlineKeyboardButton(
-                "⏭ فردا",
+                "فردا",
                 callback_data=f"opt:{key}:tomorrow",
             ),
         ])
@@ -919,8 +918,6 @@ async def handle_delete(query, context):
 
     matched_key = None
 
-    # حالت جدید: delete:user_id:date
-
     if len(parts) >= 3:
         date_text = parts[2]
 
@@ -930,8 +927,6 @@ async def handle_delete(query, context):
 
         if active and active.get("message_id") == message_id:
             matched_key = key
-
-    # پشتیبانی از دکمه‌های نسخه قبلی
 
     if matched_key is None:
         for key, active in data["active"].items():
@@ -976,9 +971,6 @@ async def handle_remove(query, context):
     matched_key = None
     previous_message_id = None
 
-    # قالب جدید:
-    # remove:user_id:date:message_id
-
     if len(parts) == 4:
         date_text = parts[2]
 
@@ -996,8 +988,6 @@ async def handle_remove(query, context):
             and active.get("message_id") == previous_message_id
         ):
             matched_key = key
-
-    # پشتیبانی از قالب قبلی
 
     elif len(parts) == 3:
         try:
@@ -1208,11 +1198,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = escape(user.full_name)
 
     # ---------------- متن درخواست ----------------
+    # ترتیب نمایش:
+    # نام گزینه
+    # امروز یا فردا
+    # احراز هویت شده
+    # تاریخ و ساعت
 
     message_text = (
         f'<a href="tg://user?id={user.id}">{name}</a>\n'
         f"{request_text}\n"
-        f"📌 درخواست برای: {target_label}\n"
+        f"{target_label}\n"
         "🟢 احراز هویت شده\n\n"
         f"📅 {date_text}\n"
         f"⏰ ساعت ثبت: {time_text}"
@@ -1264,8 +1259,6 @@ async def post_init(app):
         app,
         "🟡 ربات در حال راه‌اندازی است."
     )
-
-    # ارسال پنل فقط در صورتی که قبلاً ارسال نشده باشد
 
     try:
         await send_panel(app)
