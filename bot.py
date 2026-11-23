@@ -262,9 +262,15 @@ def load_data():
     result.setdefault("cooldowns", {})
     result.setdefault("bot_messages", [])
     result.setdefault("panel_message_id", None)
+    result.setdefault("panel_created", False)
     result.setdefault("reminder_message_id", None)
     result.setdefault("verified", {})
     result.setdefault("phone_to_user", {})
+
+    # اگر شناسه پنل قبلاً ذخیره شده باشد،
+    # یعنی پنل قبلاً ساخته شده است.
+    if result.get("panel_message_id"):
+        result["panel_created"] = True
 
     for key in (
         "active",
@@ -575,18 +581,9 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_panel(app):
     panel_id = data.get("panel_message_id")
 
-    # اگر شناسه پنل قبلی موجود نباشد، هیچ پنل جدیدی ارسال نمی‌شود.
-
-    if not panel_id:
-        logging.error(
-            "شناسه پیام پنل قبلی پیدا نشد؛ "
-            "برای جلوگیری از ارسال پنل تکراری، پنل جدید ارسال نمی‌شود."
-        )
-        return
-
     keyboard = []
 
-    # هر گزینه در یک ردیف جداگانه؛ بدون دکمه فردا
+    # هر گزینه در یک ردیف جداگانه
 
     for key, title in OPTIONS.items():
         keyboard.append([
@@ -598,27 +595,79 @@ async def send_panel(app):
 
     markup = InlineKeyboardMarkup(keyboard)
 
-    # فقط دکمه‌های همان پیام قبلی تغییر می‌کنند.
-    # متن پیام و پین بودن آن دست‌نخورده باقی می‌ماند.
+    # اگر پنل قبلی شناسه دارد، فقط دکمه‌های همان پنل ویرایش می‌شوند.
+
+    if panel_id:
+        try:
+            await app.bot.edit_message_reply_markup(
+                chat_id=GROUP_ID,
+                message_id=panel_id,
+                reply_markup=markup,
+            )
+
+            logging.info(
+                "دکمه‌های پنل قبلی با موفقیت ویرایش شدند."
+            )
+
+        except TelegramError as e:
+            logging.error(
+                "ویرایش پنل قبلی ناموفق بود: %s",
+                e,
+            )
+
+        # در هر صورت پنل جدید ساخته نمی‌شود.
+        return
+
+    # اگر قبلاً پنل ساخته شده ولی شناسه آن موجود نیست،
+    # برای جلوگیری از ایجاد پنل تکراری، پنل جدید نمی‌سازیم.
+
+    if data.get("panel_created"):
+        logging.warning(
+            "پنل قبلاً ساخته شده است؛ پنل جدید ارسال نمی‌شود."
+        )
+        return
+
+    # فقط اولین بار پنل ساخته می‌شود.
 
     try:
-        await app.bot.edit_message_reply_markup(
+        msg = await app.bot.send_message(
             chat_id=GROUP_ID,
-            message_id=panel_id,
+            text="🍽 کد غذا\n\nیکی از گزینه‌های زیر را انتخاب کنید:",
             reply_markup=markup,
         )
 
+        # شناسه پنل بلافاصله ذخیره می‌شود تا در دیپلوی بعدی
+        # پنل دیگری ساخته نشود.
+
+        data["panel_message_id"] = msg.message_id
+        data["panel_created"] = True
+
+        if msg.message_id not in data["bot_messages"]:
+            data["bot_messages"].append(msg.message_id)
+
+        save_data()
+
         logging.info(
-            "دکمه‌های پنل قبلی با موفقیت ویرایش شدند."
+            "پنل برای اولین بار ساخته و شناسه آن ذخیره شد: %s",
+            msg.message_id,
         )
 
-    except TelegramError as e:
-        logging.error(
-            "ویرایش دکمه‌های پنل قبلی ناموفق بود: %s",
-            e,
-        )
+        # پین کردن پنل اولیه
 
-        # عمداً پنل جدید ارسال نمی‌شود.
+        try:
+            await app.bot.pin_chat_message(
+                chat_id=GROUP_ID,
+                message_id=msg.message_id,
+                disable_notification=True,
+            )
+
+            logging.info("پنل با موفقیت پین شد.")
+
+        except TelegramError:
+            logging.exception("پین کردن پنل ناموفق بود.")
+
+    except TelegramError:
+        logging.exception("ساخت پنل اولیه ناموفق بود.")
 
 
 # ---------------- وب‌سرور Render ----------------
@@ -1074,7 +1123,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # تشخیص گزینه
-    # فقط درخواست امروز پذیرفته می‌شود
+    # فقط درخواست روز جاری پذیرفته می‌شود.
 
     if query.data.startswith("opt:"):
         try:
@@ -1110,8 +1159,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = current_time()
 
     target_date = now.date()
-    target_label = "امروز"
-
     target_date_text = target_date.isoformat()
 
     key = request_key(
@@ -1141,8 +1188,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 await send_temporary_warning(
                     context,
-                    f"⏳ برای درخواست {target_label} "
-                    f"لطفاً {minutes_left} دقیقه دیگر صبر کنید.",
+                    f"⏳ لطفاً {minutes_left} دقیقه دیگر صبر کنید.",
                     user.id,
                 )
 
@@ -1158,7 +1204,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if active and active.get("date") == target_date_text:
         await send_temporary_warning(
             context,
-            f"⚠️ شما برای {target_label} قبلاً درخواست ثبت کرده‌اید.\n"
+            "⚠️ شما قبلاً درخواست ثبت کرده‌اید.\n"
             "برای ثبت درخواست جدید، ابتدا درخواست قبلی را حذف کنید.",
             user.id,
             active,
@@ -1208,10 +1254,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---------------- متن درخواست ----------------
 
+    # کلمه «امروز» از متن درخواست حذف شده است.
+
     message_text = (
         f'<a href="tg://user?id={user.id}">{name}</a>\n'
         f"{request_text}\n"
-        f"{target_label}\n"
         "🟢 احراز هویت شده\n\n"
         f"📅 {date_text}\n"
         f"⏰ ساعت ثبت: {time_text}"
@@ -1264,12 +1311,12 @@ async def post_init(app):
         await send_panel(app)
 
     except Exception:
-        logging.exception("ویرایش پنل ناموفق بود.")
+        logging.exception("راه‌اندازی پنل ناموفق بود.")
 
         await notify_admin(
             app,
-            "⚠️ ویرایش دکمه‌های پنل قبلی ناموفق بود. "
-            "هیچ پنل جدیدی ارسال نشد."
+            "⚠️ عملیات پنل ناموفق بود. "
+            "برای جلوگیری از پنل تکراری، پنل جدیدی ارسال نشد."
         )
 
     try:
