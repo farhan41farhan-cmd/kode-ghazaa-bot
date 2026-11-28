@@ -148,8 +148,10 @@ def load_data():
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             result = json.load(f)
+
         if not isinstance(result, dict):
             result = {}
+
     except (FileNotFoundError, json.JSONDecodeError, ValueError):
         result = {}
 
@@ -191,6 +193,7 @@ def load_data():
     for old_key, record in list(result["active"].items()):
         if old_key.isdigit() and isinstance(record, dict):
             old_date = record.get("date")
+
             if old_date:
                 new_key = f"{old_key}:{old_date}"
                 result["active"].setdefault(new_key, record)
@@ -201,8 +204,10 @@ def load_data():
             try:
                 old_time = datetime.fromisoformat(value)
                 new_key = f"{old_key}:{old_time.date().isoformat()}"
+
                 result["cooldowns"].setdefault(new_key, value)
                 result["cooldowns"].pop(old_key, None)
+
             except (ValueError, TypeError):
                 result["cooldowns"].pop(old_key, None)
 
@@ -225,8 +230,10 @@ data = load_data()
 
 def save_data():
     temp_file = DATA_FILE + ".tmp"
+
     with open(temp_file, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
     os.replace(temp_file, DATA_FILE)
 
 
@@ -239,17 +246,28 @@ def normalize_phone(phone):
         "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
         "01234567890123456789",
     )
+
     phone = str(phone).translate(translation)
     digits = "".join(ch for ch in phone if ch.isdigit())
 
     if digits.startswith("0098"):
         digits = digits[2:]
+
     elif digits.startswith("0") and len(digits) == 11:
         digits = "98" + digits[1:]
+
     elif len(digits) == 10 and digits.startswith("9"):
         digits = "98" + digits
 
     return digits
+
+
+def normalize_digits(value):
+    translation = str.maketrans(
+        "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
+        "01234567890123456789",
+    )
+    return str(value).translate(translation)
 
 
 def is_verified(user_id):
@@ -265,6 +283,7 @@ def request_key(user_id, date_text):
 
 def is_banned(user_id):
     ban = data["bans"].get(str(user_id))
+
     if not ban:
         return False
 
@@ -305,6 +324,7 @@ async def notify_admin(app, message):
             text=message,
             parse_mode="HTML",
         )
+
     except TelegramError:
         logging.exception("ارسال پیام به مدیر ناموفق بود.")
 
@@ -333,7 +353,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         keyboard = ReplyKeyboardMarkup(
-            [[KeyboardButton("🟢 تأیید و احراز هویت", request_contact=True)]],
+            [[KeyboardButton(
+                "🟢 تأیید و احراز هویت",
+                request_contact=True,
+            )]],
             resize_keyboard=True,
             one_time_keyboard=True,
         )
@@ -348,7 +371,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id == ADMIN_ID:
         await message.reply_text(
             "سلام مدیر عزیز ❤️\n"
-            "به پنل مدیریت ربات خوش آمدی.",
+            "به پنل مدیریت ربات خوش آمدی.\n\n"
+            "📡 وضعیت ربات\n"
+            "🔓 رفع بن کاربر",
             reply_markup=ReplyKeyboardMarkup(
                 [
                     ["📡 وضعیت ربات"],
@@ -362,6 +387,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_banned(user.id):
         ban = data["bans"][str(user.id)]
         until = datetime.fromisoformat(ban["until"])
+
         await message.reply_text(
             "⛔ حساب شما موقتاً مسدود شده است.\n"
             f"زمان پایان محرومیت: {until.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -372,13 +398,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(
             "سلام ❤️\n🟢 وضعیت حساب شما: احراز هویت شده"
         )
+
     else:
         await message.reply_text(
             "سلام ❤️\nبرای ثبت درخواست در گروه، ابتدا احراز هویت کنید."
         )
 
 
-# ---------------- وضعیت ربات و رفع بن ----------------
+# ---------------- وضعیت ربات و رفع بن دستی ----------------
 
 async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -393,7 +420,6 @@ async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id != ADMIN_ID:
         return
 
-    # شروع فرایند رفع بن
     if message.text == "🔓 رفع بن کاربر":
         context.user_data["waiting_unban_id"] = True
 
@@ -406,10 +432,9 @@ async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # دریافت آیدی عددی برای رفع بن
     if context.user_data.get("waiting_unban_id"):
         try:
-            target_id = int(message.text.strip())
+            target_id = int(normalize_digits(message.text.strip()))
 
             if target_id <= 0:
                 raise ValueError
@@ -426,7 +451,6 @@ async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ban = data["bans"].pop(str(target_id), None)
 
         if not ban:
-            save_data()
             await message.reply_text(
                 "ℹ️ این کاربر در حال حاضر بن نیست."
             )
@@ -442,6 +466,7 @@ async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "اکنون می‌توانید دوباره از امکانات ربات استفاده کنید."
                 ),
             )
+
         except TelegramError:
             pass
 
@@ -452,12 +477,13 @@ async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # وضعیت ربات
     if message.text == "📡 وضعیت ربات":
         if BOT_CONNECTION_STATUS == "وصل":
             status = "🟢 وضعیت ربات: وصل است."
+
         elif BOT_CONNECTION_STATUS == "قطع":
             status = "🔴 وضعیت ربات: قطع است."
+
         else:
             status = "🟡 وضعیت ربات: در حال راه‌اندازی است."
 
@@ -484,10 +510,13 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     contact = message.contact
 
     if not contact.user_id or contact.user_id != user.id:
-        await message.reply_text("❌ لطفاً مخاطب متعلق به خودتان را ارسال کنید.")
+        await message.reply_text(
+            "❌ لطفاً مخاطب متعلق به خودتان را ارسال کنید."
+        )
         return
 
     phone = normalize_phone(contact.phone_number)
+
     if not phone:
         await message.reply_text("❌ دریافت شماره ناموفق بود.")
         return
@@ -503,8 +532,10 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     old_record = data["verified"].get(user_key)
+
     if old_record:
         old_phone = old_record.get("phone")
+
         if old_phone and data["phone_to_user"].get(old_phone) == user_key:
             data["phone_to_user"].pop(old_phone, None)
 
@@ -537,6 +568,7 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------------- وب‌سرور Render ----------------
 
 class HealthHandler(BaseHTTPRequestHandler):
+
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
@@ -549,7 +581,12 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 def start_web_server():
     port = int(os.environ.get("PORT", "10000"))
-    server = ThreadingHTTPServer(("0.0.0.0", port), HealthHandler)
+
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", port),
+        HealthHandler,
+    )
+
     server.serve_forever()
 
 
@@ -560,13 +597,19 @@ async def delete_later(message, seconds=WARNING_SECONDS):
 
     try:
         await message.delete()
+
     except TelegramError:
         pass
 
     untrack_message(message.message_id)
 
 
-async def send_temporary_warning(context, text, user_id, previous=None):
+async def send_temporary_warning(
+    context,
+    text,
+    user_id,
+    previous=None,
+):
     keyboard = None
 
     if previous:
@@ -577,7 +620,9 @@ async def send_temporary_warning(context, text, user_id, previous=None):
             keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton(
                     "🗑 حذف درخواست قبلی",
-                    callback_data=f"remove:{user_id}:{previous_date}:{previous_id}",
+                    callback_data=(
+                        f"remove:{user_id}:{previous_date}:{previous_id}"
+                    ),
                 )
             ]])
 
@@ -588,7 +633,10 @@ async def send_temporary_warning(context, text, user_id, previous=None):
     )
 
     track_message(msg.message_id)
-    context.application.create_task(delete_later(msg))
+
+    context.application.create_task(
+        delete_later(msg)
+    )
 
 
 async def send_verification_warning(context, user):
@@ -596,7 +644,10 @@ async def send_verification_warning(context, user):
     verify_url = f"https://t.me/{me.username}?start=verify"
 
     keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔐 ورود به ربات و احراز هویت", url=verify_url)
+        InlineKeyboardButton(
+            "🔐 ورود به ربات و احراز هویت",
+            url=verify_url,
+        )
     ]])
 
     msg = await context.bot.send_message(
@@ -610,6 +661,7 @@ async def send_verification_warning(context, user):
     )
 
     track_message(msg.message_id)
+
     context.application.create_task(
         delete_later(msg, AUTH_WARNING_SECONDS)
     )
@@ -628,29 +680,43 @@ async def handle_report(query, context):
     try:
         owner_id = int(parts[1])
         date_text = parts[2]
+
     except (IndexError, ValueError):
+        await query.answer("درخواست نامعتبر است.", show_alert=True)
         return
 
     key = request_key(owner_id, date_text)
     active = data["active"].get(key)
 
     if not active or active.get("message_id") != query.message.message_id:
-        await query.answer("❌ این درخواست دیگر فعال نیست.", show_alert=True)
+        await query.answer(
+            "❌ این درخواست دیگر فعال نیست.",
+            show_alert=True,
+        )
         return
 
     if is_banned(user.id):
-        await query.answer("⛔ حساب شما مسدود است.", show_alert=True)
+        await query.answer(
+            "⛔ حساب شما مسدود است.",
+            show_alert=True,
+        )
         return
 
     report_key = f"{query.message.message_id}:{user.id}"
 
     if report_key in data["reported"]:
-        await query.answer("شما قبلاً این درخواست را گزارش کرده‌اید.", show_alert=True)
+        await query.answer(
+            "شما قبلاً این درخواست را گزارش کرده‌اید.",
+            show_alert=True,
+        )
         return
 
     for draft in data["report_drafts"].values():
         if draft.get("report_key") == report_key:
-            await query.answer("گزارش شما در انتظار تأیید است.", show_alert=True)
+            await query.answer(
+                "گزارش شما در انتظار تأیید است.",
+                show_alert=True,
+            )
             return
 
     rid = f"{query.message.message_id}_{user.id}"
@@ -677,8 +743,18 @@ async def handle_report(query, context):
     save_data()
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ تأیید درخواست گزارش", callback_data=f"rconfirm:{rid}")],
-        [InlineKeyboardButton("❌ رد درخواست گزارش", callback_data=f"rcancel:{rid}")],
+        [
+            InlineKeyboardButton(
+                "✅ تأیید درخواست گزارش",
+                callback_data=f"rconfirm:{rid}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "❌ رد درخواست گزارش",
+                callback_data=f"rcancel:{rid}",
+            )
+        ],
     ])
 
     try:
@@ -726,24 +802,35 @@ async def handle_report_confirmation(query, context):
     draft = data["report_drafts"].get(rid)
 
     if not draft:
-        await query.answer("این درخواست گزارش دیگر موجود نیست.", show_alert=True)
+        await query.answer(
+            "این درخواست گزارش دیگر موجود نیست.",
+            show_alert=True,
+        )
         return
 
     if user.id != draft["reporter_id"]:
-        await query.answer("این گزارش متعلق به شما نیست.", show_alert=True)
+        await query.answer(
+            "این گزارش متعلق به شما نیست.",
+            show_alert=True,
+        )
         return
 
     if action == "rcancel":
         data["report_drafts"].pop(rid, None)
         save_data()
 
-        await query.edit_message_text("❌ درخواست گزارش شما لغو شد.")
+        await query.edit_message_text(
+            "❌ درخواست گزارش شما لغو شد."
+        )
         return
 
     report_key = draft["report_key"]
 
     if report_key in data["reported"]:
-        await query.answer("این گزارش قبلاً ثبت شده است.", show_alert=True)
+        await query.answer(
+            "این گزارش قبلاً ثبت شده است.",
+            show_alert=True,
+        )
         return
 
     data["reported"].append(report_key)
@@ -753,8 +840,14 @@ async def handle_report_confirmation(query, context):
 
     admin_keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✅ تأیید گزارش", callback_data=f"adminapprove:{rid}"),
-            InlineKeyboardButton("❌ رد گزارش", callback_data=f"adminreject:{rid}"),
+            InlineKeyboardButton(
+                "✅ تأیید گزارش",
+                callback_data=f"adminapprove:{rid}",
+            ),
+            InlineKeyboardButton(
+                "❌ رد گزارش",
+                callback_data=f"adminreject:{rid}",
+            ),
         ]
     ])
 
@@ -800,25 +893,36 @@ async def handle_report_confirmation(query, context):
 
     except TelegramError:
         logging.exception("ارسال گزارش به مدیر ناموفق بود.")
-        await query.answer("❌ ارسال گزارش به مدیر ناموفق بود.", show_alert=True)
+
+        await query.answer(
+            "❌ ارسال گزارش به مدیر ناموفق بود.",
+            show_alert=True,
+        )
 
 
 # ---------------- تصمیم مدیر درباره گزارش ----------------
 
 async def handle_admin_report_decision(query, context):
     if query.from_user.id != ADMIN_ID:
-        await query.answer("⛔ فقط مدیر اجازه بررسی گزارش را دارد.", show_alert=True)
+        await query.answer(
+            "⛔ فقط مدیر اجازه بررسی گزارش را دارد.",
+            show_alert=True,
+        )
         return
 
     action, rid = query.data.split(":", 1)
     report = data["reports"].get(rid)
 
     if not report:
-        await query.answer("این گزارش قبلاً بررسی شده یا وجود ندارد.", show_alert=True)
+        await query.answer(
+            "این گزارش قبلاً بررسی شده یا وجود ندارد.",
+            show_alert=True,
+        )
         return
 
     reporter_id = int(report["reporter_id"])
 
+    # تأیید گزارش
     if action == "adminapprove":
         data["reports"].pop(rid, None)
         save_data()
@@ -826,15 +930,23 @@ async def handle_admin_report_decision(query, context):
         try:
             await context.bot.send_message(
                 chat_id=reporter_id,
-                text="✅ گزارش شما توسط مدیر تأیید شد. ممنون از اطلاع‌رسانی شما.",
+                text=(
+                    "✅ گزارش شما توسط مدیر تأیید شد. "
+                    "ممنون از اطلاع‌رسانی شما."
+                ),
             )
+
         except TelegramError:
             pass
 
-        await query.edit_message_reply_markup(reply_markup=None)
+        await query.edit_message_reply_markup(
+            reply_markup=None
+        )
+
         await query.answer("گزارش تأیید شد.")
         return
 
+    # رد گزارش و مسدودسازی ۴۸ ساعته
     if action == "adminreject":
         now = current_time()
         until = now + timedelta(hours=48)
@@ -854,14 +966,97 @@ async def handle_admin_report_decision(query, context):
                 text=(
                     "❌ گزارش شما توسط مدیر رد شد.\n\n"
                     "⛔ حساب شما به مدت ۲ روز مسدود شد.\n"
-                    f"زمان پایان محرومیت: {until.strftime('%Y-%m-%d %H:%M:%S')}"
+                    f"زمان پایان محرومیت: "
+                    f"{until.strftime('%Y-%m-%d %H:%M:%S')}"
                 ),
             )
+
         except TelegramError:
             pass
 
-        await query.edit_message_reply_markup(reply_markup=None)
-        await query.answer("گزارش رد شد و کاربر ۴۸ ساعت مسدود شد.")
+        # دکمه رفع بن دقیقاً زیر همان پیام گزارش مدیر
+        unban_keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🔓 رفع بن کاربر",
+                    callback_data=f"unban:{reporter_id}",
+                )
+            ]
+        ])
+
+        await query.edit_message_reply_markup(
+            reply_markup=unban_keyboard
+        )
+
+        await query.answer(
+            "گزارش رد شد و کاربر ۴۸ ساعت مسدود شد."
+        )
+
+
+# ---------------- رفع بن از داخل پیام گزارش ----------------
+
+async def handle_admin_unban(query, context):
+    if query.from_user.id != ADMIN_ID:
+        await query.answer(
+            "⛔ فقط مدیر اجازه رفع بن دارد.",
+            show_alert=True,
+        )
+        return
+
+    try:
+        target_id = int(query.data.split(":", 1)[1])
+
+    except (IndexError, ValueError):
+        await query.answer(
+            "آیدی کاربر نامعتبر است.",
+            show_alert=True,
+        )
+        return
+
+    # حذف بن کاربر بدون محدودیت زمانی یا تعدادی
+    ban = data["bans"].pop(str(target_id), None)
+
+    if not ban:
+        await query.answer(
+            "این کاربر قبلاً از بن خارج شده یا بن نیست.",
+            show_alert=True,
+        )
+        return
+
+    save_data()
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "🟢 محرومیت حساب شما توسط مدیر برداشته شد.\n\n"
+                "اکنون می‌توانید دوباره از امکانات ربات استفاده کنید."
+            ),
+        )
+
+    except TelegramError:
+        logging.exception(
+            "ارسال پیام رفع بن به کاربر ناموفق بود."
+        )
+
+    # حذف دکمه پس از رفع بن
+    try:
+        await query.edit_message_reply_markup(
+            reply_markup=None
+        )
+
+    except TelegramError:
+        pass
+
+    await query.answer(
+        "✅ بن کاربر با موفقیت برداشته شد."
+    )
+
+    await notify_admin(
+        context.application,
+        "🔓 بن کاربر با موفقیت برداشته شد.\n"
+        f"🆔 آیدی کاربر: <code>{target_id}</code>"
+    )
 
 
 # ---------------- حذف درخواست ----------------
@@ -876,11 +1071,15 @@ async def handle_delete(query, context):
 
     try:
         owner_id = int(parts[1])
+
     except (IndexError, ValueError):
         return
 
     if user.id != owner_id and user.id != ADMIN_ID:
-        await query.answer("❌ اجازه حذف ندارید.", show_alert=True)
+        await query.answer(
+            "❌ اجازه حذف ندارید.",
+            show_alert=True,
+        )
         return
 
     message_id = query.message.message_id
@@ -896,21 +1095,31 @@ async def handle_delete(query, context):
 
     if matched_key is None:
         for key, active in data["active"].items():
-            if key.startswith(f"{owner_id}:") and active.get("message_id") == message_id:
+            if (
+                key.startswith(f"{owner_id}:")
+                and active.get("message_id") == message_id
+            ):
                 matched_key = key
                 break
 
     if matched_key is None:
-        await query.answer("این درخواست دیگر فعال نیست.", show_alert=True)
+        await query.answer(
+            "این درخواست دیگر فعال نیست.",
+            show_alert=True,
+        )
         return
 
     try:
         await query.message.delete()
+
     except TelegramError:
-        await query.answer("❌ حذف پیام ناموفق بود.")
+        await query.answer(
+            "❌ حذف پیام ناموفق بود."
+        )
         return
 
     untrack_message(message_id)
+
     data["active"].pop(matched_key, None)
     save_data()
 
@@ -929,17 +1138,23 @@ async def handle_remove(query, context):
         owner_id = int(parts[1])
         date_text = parts[2]
         previous_message_id = int(parts[3])
+
     except (IndexError, ValueError):
         return
 
     if user.id != owner_id:
-        await query.answer("❌ فقط صاحب درخواست می‌تواند آن را حذف کند.")
+        await query.answer(
+            "❌ فقط صاحب درخواست می‌تواند آن را حذف کند."
+        )
         return
 
     key = request_key(owner_id, date_text)
     active = data["active"].get(key)
 
-    if not active or active.get("message_id") != previous_message_id:
+    if (
+        not active
+        or active.get("message_id") != previous_message_id
+    ):
         await query.answer("درخواست قبلی پیدا نشد.")
         return
 
@@ -948,15 +1163,18 @@ async def handle_remove(query, context):
             chat_id=GROUP_ID,
             message_id=previous_message_id,
         )
+
     except TelegramError:
         pass
 
     untrack_message(previous_message_id)
+
     data["active"].pop(key, None)
     save_data()
 
     try:
         await query.message.delete()
+
     except TelegramError:
         pass
 
@@ -972,66 +1190,91 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     callback = query.data or ""
 
+    # گزارش درخواست
     if callback.startswith("report:"):
         await handle_report(query, context)
         return
 
-    if callback.startswith("rconfirm:") or callback.startswith("rcancel:"):
+    # تأیید یا لغو گزارش توسط کاربر
+    if (
+        callback.startswith("rconfirm:")
+        or callback.startswith("rcancel:")
+    ):
         await handle_report_confirmation(query, context)
         return
 
-    if callback.startswith("adminapprove:") or callback.startswith("adminreject:"):
+    # تصمیم مدیر درباره گزارش
+    if (
+        callback.startswith("adminapprove:")
+        or callback.startswith("adminreject:")
+    ):
         await handle_admin_report_decision(query, context)
         return
 
+    # رفع بن مستقیم از پیام گزارش مدیر
+    if callback.startswith("unban:"):
+        await handle_admin_unban(query, context)
+        return
+
+    # حذف درخواست
     if callback.startswith("delete:"):
         await handle_delete(query, context)
         return
 
+    # حذف درخواست قبلی
     if callback.startswith("remove:"):
         await handle_remove(query, context)
         return
 
-    await query.answer()
-
+    # بررسی گزینه‌های پنل
     if callback.startswith("opt:"):
         try:
             _, option_key, target_type = callback.split(":", 2)
+
         except ValueError:
+            await query.answer()
             return
 
         if target_type != "today":
+            await query.answer()
             return
+
     else:
         option_key = callback
 
     if option_key not in OPTIONS:
+        await query.answer()
         return
 
+    # بررسی مسدودی
     if is_banned(user.id):
         ban = data["bans"][str(user.id)]
         until = datetime.fromisoformat(ban["until"])
 
-        await context.bot.send_message(
-            chat_id=user.id,
-            text=(
-                "⛔ حساب شما مسدود است.\n"
-                "زمان پایان محرومیت: "
-                + until.strftime("%Y-%m-%d %H:%M")
-            ),
+        await query.answer(
+            "⛔ حساب شما مسدود است. پایان محرومیت: "
+            + until.strftime("%Y-%m-%d %H:%M"),
+            show_alert=True,
         )
         return
+
+    await query.answer()
 
     if not is_verified(user.id):
         try:
             await send_verification_warning(context, user)
+
         except TelegramError:
-            logging.exception("ارسال پیام احراز هویت ناموفق بود.")
+            logging.exception(
+                "ارسال پیام احراز هویت ناموفق بود."
+            )
+
         return
 
     now = current_time()
     target_date = now.date()
     target_date_text = target_date.isoformat()
+
     key = request_key(user.id, target_date_text)
 
     cooldown_value = data["cooldowns"].get(key)
@@ -1041,8 +1284,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cooldown_until = datetime.fromisoformat(cooldown_value)
 
             if now < cooldown_until:
-                seconds_left = int((cooldown_until - now).total_seconds())
-                minutes_left = max(1, (seconds_left + 59) // 60)
+                seconds_left = int(
+                    (cooldown_until - now).total_seconds()
+                )
+
+                minutes_left = max(
+                    1,
+                    (seconds_left + 59) // 60,
+                )
 
                 await send_temporary_warning(
                     context,
@@ -1066,18 +1315,33 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    jalali = jdatetime.date.fromgregorian(date=target_date)
+    jalali = jdatetime.date.fromgregorian(
+        date=target_date
+    )
 
     weekdays = {
-        0: "دوشنبه", 1: "سه‌شنبه", 2: "چهارشنبه",
-        3: "پنجشنبه", 4: "جمعه", 5: "شنبه", 6: "یکشنبه",
+        0: "دوشنبه",
+        1: "سه‌شنبه",
+        2: "چهارشنبه",
+        3: "پنجشنبه",
+        4: "جمعه",
+        5: "شنبه",
+        6: "یکشنبه",
     }
 
     months = {
-        1: "فروردین", 2: "اردیبهشت", 3: "خرداد",
-        4: "تیر", 5: "مرداد", 6: "شهریور",
-        7: "مهر", 8: "آبان", 9: "آذر",
-        10: "دی", 11: "بهمن", 12: "اسفند",
+        1: "فروردین",
+        2: "اردیبهشت",
+        3: "خرداد",
+        4: "تیر",
+        5: "مرداد",
+        6: "شهریور",
+        7: "مهر",
+        8: "آبان",
+        9: "آذر",
+        10: "دی",
+        11: "بهمن",
+        12: "اسفند",
     }
 
     date_text = (
@@ -1100,11 +1364,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton(
                 "🗑 حذف پیام",
-                callback_data=f"delete:{user.id}:{target_date_text}",
+                callback_data=(
+                    f"delete:{user.id}:{target_date_text}"
+                ),
             ),
             InlineKeyboardButton(
                 "🟠 گزارش",
-                callback_data=f"report:{user.id}:{target_date_text}",
+                callback_data=(
+                    f"report:{user.id}:{target_date_text}"
+                ),
             ),
         ]
     ])
@@ -1163,6 +1431,7 @@ async def midnight_cleanup(app):
                 chat_id=GROUP_ID,
                 message_id=message_id,
             )
+
         except TelegramError:
             pass
 
@@ -1200,16 +1469,26 @@ async def midnight_scheduler(app):
     while True:
         now = current_time()
 
-        next_midnight = (now + timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
+        next_midnight = (
+            now + timedelta(days=1)
+        ).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
         )
 
-        await asyncio.sleep(max(1, (next_midnight - now).total_seconds()))
+        await asyncio.sleep(
+            max(1, (next_midnight - now).total_seconds())
+        )
 
         try:
             await midnight_cleanup(app)
+
         except Exception:
-            logging.exception("خطا در پاک‌سازی نیمه‌شب")
+            logging.exception(
+                "خطا در پاک‌سازی نیمه‌شب"
+            )
 
 
 # ---------------- یادآوری چهارشنبه ----------------
@@ -1218,8 +1497,13 @@ def next_wednesday_reminder():
     now = current_time()
     days = (2 - now.weekday()) % 7
 
-    target = (now + timedelta(days=days)).replace(
-        hour=0, minute=1, second=0, microsecond=0
+    target = (
+        now + timedelta(days=days)
+    ).replace(
+        hour=0,
+        minute=1,
+        second=0,
+        microsecond=0,
     )
 
     if target <= now:
@@ -1243,11 +1527,14 @@ async def reminder_scheduler(app):
             )
 
             data["reminder_message_id"] = msg.message_id
+
             track_message(msg.message_id)
             save_data()
 
         except Exception:
-            logging.exception("ارسال یادآوری ناموفق بود.")
+            logging.exception(
+                "ارسال یادآوری ناموفق بود."
+            )
 
 
 # ---------------- بررسی اتصال ----------------
@@ -1263,14 +1550,24 @@ async def connection_monitor(app):
 
             if BOT_CONNECTION_STATUS != "وصل":
                 BOT_CONNECTION_STATUS = "وصل"
-                await notify_admin(app, "🟢 ربات وصل شد.")
+
+                await notify_admin(
+                    app,
+                    "🟢 ربات وصل شد."
+                )
 
         except Exception:
-            logging.exception("بررسی اتصال تلگرام ناموفق بود.")
+            logging.exception(
+                "بررسی اتصال تلگرام ناموفق بود."
+            )
 
             if BOT_CONNECTION_STATUS != "قطع":
                 BOT_CONNECTION_STATUS = "قطع"
-                await notify_admin(app, "🔴 ارتباط ربات با تلگرام قطع شد.")
+
+                await notify_admin(
+                    app,
+                    "🔴 ارتباط ربات با تلگرام قطع شد."
+                )
 
 
 # ---------------- راه‌اندازی ----------------
@@ -1280,19 +1577,30 @@ async def post_init(app):
 
     BOT_CONNECTION_STATUS = "در حال راه‌اندازی"
 
-    await notify_admin(app, "🟡 ربات در حال راه‌اندازی است.")
+    await notify_admin(
+        app,
+        "🟡 ربات در حال راه‌اندازی است."
+    )
 
     # عمداً send_panel اجرا نمی‌شود.
     # پنل فعلی و پین‌های گروه دست‌نخورده باقی می‌مانند.
 
     try:
         await app.bot.get_me()
+
         BOT_CONNECTION_STATUS = "وصل"
-        await notify_admin(app, "🟢 ربات وصل شد.")
+
+        await notify_admin(
+            app,
+            "🟢 ربات وصل شد."
+        )
 
     except Exception:
         BOT_CONNECTION_STATUS = "قطع"
-        logging.exception("اتصال اولیه ناموفق بود.")
+
+        logging.exception(
+            "اتصال اولیه ناموفق بود."
+        )
 
     app.create_task(midnight_scheduler(app))
     app.create_task(reminder_scheduler(app))
@@ -1300,11 +1608,16 @@ async def post_init(app):
 
 
 async def post_shutdown(app):
-    logging.info("ربات در حال خاموش شدن است.")
+    logging.info(
+        "ربات در حال خاموش شدن است."
+    )
 
 
 async def on_error(update, context):
-    logging.error("خطای ربات:", exc_info=context.error)
+    logging.error(
+        "خطای ربات:",
+        exc_info=context.error,
+    )
 
 
 # ---------------- اجرای اصلی ----------------
@@ -1331,20 +1644,33 @@ def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start", start))
-
     app.add_handler(
-        MessageHandler(filters.CONTACT, receive_contact)
+        CommandHandler("start", start)
     )
 
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, private_status)
+        MessageHandler(
+            filters.CONTACT,
+            receive_contact,
+        )
     )
 
-    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            private_status,
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(button)
+    )
+
     app.add_error_handler(on_error)
 
-    logging.info("ربات در حال اجرا است.")
+    logging.info(
+        "ربات در حال اجرا است."
+    )
 
     app.run_polling(
         bootstrap_retries=-1,
