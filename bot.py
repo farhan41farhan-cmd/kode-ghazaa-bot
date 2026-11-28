@@ -60,10 +60,9 @@ if not TOKEN:
     raise RuntimeError("BOT_TOKEN در Environment تنظیم نشده است.")
 
 
-# ---------------- کاربران از قبل احراز هویت شده ----------------
+# ---------------- کاربران احراز هویت شده ----------------
 
 PRE_VERIFIED_USER_IDS = {
-    # کاربران قبلی
     7594827517,
     6161866923,
     6771302483,
@@ -220,30 +219,31 @@ PRE_VERIFIED_USER_IDS = {
     8954891685,
     6884766762,
     5771501111,
-    # کاربران احراز هویت‌شده جدید ۲۴ و ۲۵ آبان
-5786088160,
-8316906528,
-5691963511,
-1315038338,
-8332136704,
-8768814311,
-7842227744,
-7554524618,
-2010428363,
-7422858975,
-932500345,
-7949782565,
-6612664934,
-5935824043,
-1235303439,
-6937620825,
-322418979,
-8016802327,
-5160325649,
-7710924160,
-8639387319,
-8247974236,
-1247185948,
+
+    # کاربران ۲۴ و ۲۵ آبان
+    5786088160,
+    8316906528,
+    5691963511,
+    1315038338,
+    8332136704,
+    8768814311,
+    7842227744,
+    7554524618,
+    2010428363,
+    7422858975,
+    932500345,
+    7949782565,
+    6612664934,
+    5935824043,
+    1235303439,
+    6937620825,
+    322418979,
+    8016802327,
+    5160325649,
+    7710924160,
+    8639387319,
+    8247974236,
+    1247185948,
     6923089558,
     1398661753,
     1080215732,
@@ -252,11 +252,43 @@ PRE_VERIFIED_USER_IDS = {
     8937880199,
     1127315716,
     7104906413,
-    8135182663, 
+    8135182663,
     8992760337,
-8616226663,
-6814989384,
-8812083817,
+    8616226663,
+    6814989384,
+    8812083817,
+
+    # کاربران احراز هویت شده جدید ۲۸ آبان
+    7561512127,
+    6849632791,
+    6800704481,
+    1118191560,
+    7685872552,
+    6475878799,
+    1462900307,
+    6599828737,
+    6465606330,
+    6872437387,
+    5648298670,
+    7330168019,
+    5401558981,
+    6471564648,
+    7754088051,
+    6264242850,
+    2136118259,
+    8408309341,
+    1771570153,
+    6760310789,
+    1275421199,
+    8569335317,
+    7910620225,
+    1974779605,
+    8251262548,
+    5801569363,
+    7394770361,
+    1310490076,
+    6331092168,
+    1568089259,
 }
 
 
@@ -303,11 +335,7 @@ def load_data():
     result.setdefault("reminder_message_id", None)
     result.setdefault("verified", {})
     result.setdefault("phone_to_user", {})
-
-    # اگر شناسه پنل قبلاً ذخیره شده باشد،
-    # یعنی پنل قبلاً ساخته شده است.
-    if result.get("panel_message_id"):
-        result["panel_created"] = True
+    result.setdefault("reported", [])
 
     for key in (
         "active",
@@ -318,10 +346,14 @@ def load_data():
         if not isinstance(result[key], dict):
             result[key] = {}
 
-    if not isinstance(result["bot_messages"], list):
-        result["bot_messages"] = []
+    for key in ("bot_messages", "reported"):
+        if not isinstance(result[key], list):
+            result[key] = []
 
-    # انتقال درخواست‌های نسخه قبلی به ساختار جدید
+    if result.get("panel_message_id"):
+        result["panel_created"] = True
+
+    # انتقال اطلاعات نسخه قبلی
 
     for old_key, record in list(result["active"].items()):
         if old_key.isdigit() and isinstance(record, dict):
@@ -329,12 +361,7 @@ def load_data():
 
             if old_date:
                 new_key = f"{old_key}:{old_date}"
-
-                result["active"].setdefault(
-                    new_key,
-                    record,
-                )
-
+                result["active"].setdefault(new_key, record)
                 result["active"].pop(old_key, None)
 
     for old_key, value in list(result["cooldowns"].items()):
@@ -343,11 +370,7 @@ def load_data():
                 old_time = datetime.fromisoformat(value)
                 new_key = f"{old_key}:{old_time.date().isoformat()}"
 
-                result["cooldowns"].setdefault(
-                    new_key,
-                    value,
-                )
-
+                result["cooldowns"].setdefault(new_key, value)
                 result["cooldowns"].pop(old_key, None)
 
             except (ValueError, TypeError):
@@ -434,6 +457,7 @@ async def notify_admin(app, message):
         await app.bot.send_message(
             chat_id=ADMIN_ID,
             text=message,
+            parse_mode="HTML",
         )
     except TelegramError:
         logging.exception("ارسال پیام به مدیر ناموفق بود.")
@@ -606,7 +630,7 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.application,
         "🟢 کاربر جدید احراز هویت شد\n\n"
         f"نام: {escape(user.full_name)}\n"
-        f"نام کاربری: @{user.username if user.username else 'ندارد'}\n"
+        f"نام کاربری: @{escape(user.username or 'ندارد')}\n"
         f"آیدی تلگرام: {user.id}\n"
         f"شماره تماس: +{phone}\n"
         f"زمان: {current_time().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -620,8 +644,6 @@ async def send_panel(app):
 
     keyboard = []
 
-    # هر گزینه در یک ردیف جداگانه
-
     for key, title in OPTIONS.items():
         keyboard.append([
             InlineKeyboardButton(
@@ -632,8 +654,6 @@ async def send_panel(app):
 
     markup = InlineKeyboardMarkup(keyboard)
 
-    # اگر پنل قبلی شناسه دارد، فقط دکمه‌های همان پنل ویرایش می‌شوند.
-
     if panel_id:
         try:
             await app.bot.edit_message_reply_markup(
@@ -642,29 +662,16 @@ async def send_panel(app):
                 reply_markup=markup,
             )
 
-            logging.info(
-                "دکمه‌های پنل قبلی با موفقیت ویرایش شدند."
-            )
+            logging.info("دکمه‌های پنل قبلی ویرایش شدند.")
 
         except TelegramError as e:
-            logging.error(
-                "ویرایش پنل قبلی ناموفق بود: %s",
-                e,
-            )
+            logging.error("ویرایش پنل ناموفق بود: %s", e)
 
-        # در هر صورت پنل جدید ساخته نمی‌شود.
         return
-
-    # اگر قبلاً پنل ساخته شده ولی شناسه آن موجود نیست،
-    # برای جلوگیری از ایجاد پنل تکراری، پنل جدید نمی‌سازیم.
 
     if data.get("panel_created"):
-        logging.warning(
-            "پنل قبلاً ساخته شده است؛ پنل جدید ارسال نمی‌شود."
-        )
+        logging.warning("پنل قبلاً ساخته شده است.")
         return
-
-    # فقط اولین بار پنل ساخته می‌شود.
 
     try:
         msg = await app.bot.send_message(
@@ -672,9 +679,6 @@ async def send_panel(app):
             text="🍽 کد غذا\n\nیکی از گزینه‌های زیر را انتخاب کنید:",
             reply_markup=markup,
         )
-
-        # شناسه پنل بلافاصله ذخیره می‌شود تا در دیپلوی بعدی
-        # پنل دیگری ساخته نشود.
 
         data["panel_message_id"] = msg.message_id
         data["panel_created"] = True
@@ -684,27 +688,17 @@ async def send_panel(app):
 
         save_data()
 
-        logging.info(
-            "پنل برای اولین بار ساخته و شناسه آن ذخیره شد: %s",
-            msg.message_id,
-        )
-
-        # پین کردن پنل اولیه
-
         try:
             await app.bot.pin_chat_message(
                 chat_id=GROUP_ID,
                 message_id=msg.message_id,
                 disable_notification=True,
             )
-
-            logging.info("پنل با موفقیت پین شد.")
-
         except TelegramError:
             logging.exception("پین کردن پنل ناموفق بود.")
 
     except TelegramError:
-        logging.exception("ساخت پنل اولیه ناموفق بود.")
+        logging.exception("ساخت پنل ناموفق بود.")
 
 
 # ---------------- وب‌سرور Render ----------------
@@ -760,9 +754,7 @@ async def send_temporary_warning(
         previous_id = previous.get("message_id")
 
         if previous_date and previous_id:
-            callback = (
-                f"remove:{user_id}:{previous_date}:{previous_id}"
-            )
+            callback = f"remove:{user_id}:{previous_date}:{previous_id}"
 
             keyboard = InlineKeyboardMarkup([[
                 InlineKeyboardButton(
@@ -779,12 +771,10 @@ async def send_temporary_warning(
 
     track_message(msg.message_id)
 
-    context.application.create_task(
-        delete_later(msg)
-    )
+    context.application.create_task(delete_later(msg))
 
 
-# ---------------- پیام احراز هویت در گروه ----------------
+# ---------------- احراز هویت در گروه ----------------
 
 async def send_verification_warning(context, user):
     me = await context.bot.get_me()
@@ -856,10 +846,7 @@ async def midnight_cleanup(app):
                 message_id=message_id,
             )
         except TelegramError:
-            logging.warning(
-                "حذف پیام %s ناموفق بود.",
-                message_id,
-            )
+            logging.warning("حذف پیام %s ناموفق بود.", message_id)
 
     data["active"] = preserved_active
 
@@ -887,6 +874,7 @@ async def midnight_cleanup(app):
             data["bot_messages"].append(message_id)
 
     data["reminder_message_id"] = None
+    data["reported"] = []
 
     save_data()
 
@@ -962,7 +950,6 @@ async def reminder_scheduler(app):
 
         try:
             await send_reminder(app)
-
             logging.info("یادآوری چهارشنبه ارسال شد.")
 
         except Exception:
@@ -1015,16 +1002,20 @@ async def handle_delete(query, context):
     except (IndexError, ValueError):
         return
 
-    if user.id != owner_id:
+    # فقط صاحب درخواست یا مدیر
+
+    if user.id != owner_id and user.id != ADMIN_ID:
+        await query.answer(
+            "❌ اجازه حذف این درخواست را ندارید.",
+            show_alert=True,
+        )
         return
 
     message_id = query.message.message_id
-
     matched_key = None
 
     if len(parts) >= 3:
         date_text = parts[2]
-
         key = request_key(owner_id, date_text)
 
         active = data["active"].get(key)
@@ -1041,20 +1032,29 @@ async def handle_delete(query, context):
                 matched_key = key
                 break
 
+    if matched_key is None:
+        await query.answer(
+            "این درخواست دیگر فعال نیست.",
+            show_alert=True,
+        )
+        return
+
     try:
         await query.message.delete()
     except TelegramError:
+        await query.answer("❌ حذف پیام ناموفق بود.")
         return
 
     untrack_message(message_id)
 
-    if matched_key:
-        data["active"].pop(matched_key, None)
+    data["active"].pop(matched_key, None)
 
     save_data()
 
+    await query.answer("✅ درخواست حذف شد.")
 
-# ---------------- حذف درخواست قبلی از هشدار ----------------
+
+# ---------------- حذف درخواست قبلی ----------------
 
 async def handle_remove(query, context):
     user = query.from_user
@@ -1070,6 +1070,7 @@ async def handle_remove(query, context):
         return
 
     if user.id != owner_id:
+        await query.answer("❌ فقط صاحب درخواست می‌تواند آن را حذف کند.")
         return
 
     matched_key = None
@@ -1108,6 +1109,7 @@ async def handle_remove(query, context):
                 break
 
     if not matched_key:
+        await query.answer("درخواست قبلی پیدا نشد.")
         return
 
     try:
@@ -1132,6 +1134,111 @@ async def handle_remove(query, context):
     untrack_message(query.message.message_id)
 
 
+# ---------------- گزارش درخواست ----------------
+
+async def handle_report(query, context):
+    user = query.from_user
+
+    if not query.message:
+        return
+
+    parts = query.data.split(":")
+
+    try:
+        owner_id = int(parts[1])
+        date_text = parts[2]
+    except (IndexError, ValueError):
+        return
+
+    key = request_key(owner_id, date_text)
+    active = data["active"].get(key)
+
+    if (
+        not active
+        or active.get("message_id") != query.message.message_id
+    ):
+        await query.answer(
+            "❌ این درخواست دیگر فعال نیست.",
+            show_alert=True,
+        )
+        return
+
+    # جلوگیری از گزارش تکراری توسط یک نفر
+
+    report_key = f"{query.message.message_id}:{user.id}"
+
+    if report_key in data["reported"]:
+        await query.answer(
+            "شما قبلاً این درخواست را گزارش کرده‌اید.",
+            show_alert=True,
+        )
+        return
+
+    owner_info = data["verified"].get(str(owner_id), {})
+    reporter_info = data["verified"].get(str(user.id), {})
+
+    owner_phone = owner_info.get("phone") or "ثبت نشده"
+    reporter_phone = reporter_info.get("phone") or "ثبت نشده"
+
+    owner_name = owner_info.get("name") or "نامشخص"
+    owner_username = owner_info.get("username") or "ندارد"
+
+    original_text = query.message.text or ""
+
+    report_text = (
+        "🚨 <b>گزارش جدید درخواست کد غذا</b>\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "📌 <b>متن دقیق پیام گزارش‌شده:</b>\n\n"
+        f"{escape(original_text)}\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "👤 <b>صاحب درخواست:</b>\n\n"
+        f"نام: {escape(owner_name)}\n"
+        f"نام کاربری: @{escape(owner_username)}\n"
+        f"آیدی عددی: <code>{owner_id}</code>\n"
+        f"شماره تماس: {escape('+' + owner_phone if owner_phone != 'ثبت نشده' else owner_phone)}\n\n"
+        "━━━━━━━━━━━━━━\n"
+        "📝 <b>گزارش‌دهنده:</b>\n\n"
+        f"نام: {escape(user.full_name)}\n"
+        f"نام کاربری: @{escape(user.username or 'ندارد')}\n"
+        f"آیدی عددی: <code>{user.id}</code>\n"
+        f"شماره تماس: {escape('+' + reporter_phone if reporter_phone != 'ثبت نشده' else reporter_phone)}\n\n"
+        "━━━━━━━━━━━━━━\n"
+        f"📅 تاریخ: {current_time().strftime('%Y-%m-%d')}\n"
+        f"⏰ ساعت: {current_time().strftime('%H:%M:%S')}"
+    )
+
+    admin_keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "🗑 حذف درخواست گزارش‌شده",
+            callback_data=f"delete:{owner_id}:{date_text}",
+        )
+    ]])
+
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=report_text,
+            parse_mode="HTML",
+            reply_markup=admin_keyboard,
+        )
+
+        data["reported"].append(report_key)
+        save_data()
+
+        await query.answer(
+            "✅ گزارش شما برای مدیر ارسال شد.",
+            show_alert=True,
+        )
+
+    except TelegramError:
+        logging.exception("ارسال گزارش ناموفق بود.")
+
+        await query.answer(
+            "❌ ارسال گزارش ناموفق بود.",
+            show_alert=True,
+        )
+
+
 # ---------------- مدیریت دکمه‌های پنل ----------------
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1142,25 +1249,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = query.from_user
 
-    try:
-        await query.answer()
-    except TelegramError:
-        pass
-
     # حذف درخواست
 
     if query.data.startswith("delete:"):
         await handle_delete(query, context)
         return
 
-    # حذف درخواست قبلی از پیام هشدار
+    # گزارش درخواست
+
+    if query.data.startswith("report:"):
+        await handle_report(query, context)
+        return
+
+    # حذف درخواست قبلی
 
     if query.data.startswith("remove:"):
         await handle_remove(query, context)
         return
 
-    # تشخیص گزینه
-    # فقط درخواست روز جاری پذیرفته می‌شود.
+    try:
+        await query.answer()
+    except TelegramError:
+        pass
 
     if query.data.startswith("opt:"):
         try:
@@ -1172,7 +1282,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
     else:
-        # پشتیبانی از دکمه‌های قدیمی
         option_key = query.data
 
     if option_key not in OPTIONS:
@@ -1180,16 +1289,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     request_text = OPTIONS[option_key]
 
-    # بررسی احراز هویت
+    # احراز هویت
 
     if not is_verified(user.id):
         try:
             await send_verification_warning(context, user)
-
         except TelegramError:
-            logging.exception(
-                "ارسال پیام احراز هویت ناموفق بود."
-            )
+            logging.exception("ارسال پیام احراز هویت ناموفق بود.")
 
         return
 
@@ -1198,20 +1304,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_date = now.date()
     target_date_text = target_date.isoformat()
 
-    key = request_key(
-        user.id,
-        target_date_text,
-    )
+    key = request_key(user.id, target_date_text)
 
-    # ---------------- محدودیت ۱۵ دقیقه‌ای ----------------
+    # محدودیت ۱۵ دقیقه‌ای
 
     cooldown_value = data["cooldowns"].get(key)
 
     if cooldown_value:
         try:
-            cooldown_until = datetime.fromisoformat(
-                cooldown_value
-            )
+            cooldown_until = datetime.fromisoformat(cooldown_value)
 
             if now < cooldown_until:
                 seconds_left = int(
@@ -1234,7 +1335,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except (ValueError, TypeError):
             data["cooldowns"].pop(key, None)
 
-    # ---------------- بررسی درخواست فعال ----------------
+    # درخواست فعال
 
     active = data["active"].get(key)
 
@@ -1249,7 +1350,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # ---------------- تاریخ شمسی ----------------
+    # تاریخ شمسی
 
     jalali = jdatetime.date.fromgregorian(
         date=target_date
@@ -1289,9 +1390,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     name = escape(user.full_name)
 
-    # ---------------- متن درخواست ----------------
-
-    # کلمه «امروز» از متن درخواست حذف شده است.
+    # متن درخواست
 
     message_text = (
         f'<a href="tg://user?id={user.id}">{name}</a>\n'
@@ -1301,14 +1400,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏰ ساعت ثبت: {time_text}"
     )
 
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            "🗑 حذف پیام",
-            callback_data=f"delete:{user.id}:{target_date_text}",
-        )
-    ]])
+    # دکمه حذف و گزارش
 
-    # ---------------- ارسال درخواست ----------------
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🗑 حذف پیام",
+                callback_data=f"delete:{user.id}:{target_date_text}",
+            ),
+            InlineKeyboardButton(
+                "🟠 گزارش",
+                callback_data=f"report:{user.id}:{target_date_text}",
+            ),
+        ]
+    ])
+
+    # ارسال درخواست
 
     sent = await context.bot.send_message(
         chat_id=GROUP_ID,
@@ -1352,8 +1459,7 @@ async def post_init(app):
 
         await notify_admin(
             app,
-            "⚠️ عملیات پنل ناموفق بود. "
-            "برای جلوگیری از پنل تکراری، پنل جدیدی ارسال نشد."
+            "⚠️ عملیات پنل ناموفق بود."
         )
 
     try:
@@ -1369,9 +1475,7 @@ async def post_init(app):
     except Exception:
         BOT_CONNECTION_STATUS = "قطع"
 
-        logging.exception(
-            "اتصال اولیه به تلگرام ناموفق بود."
-        )
+        logging.exception("اتصال اولیه به تلگرام ناموفق بود.")
 
         await notify_admin(
             app,
