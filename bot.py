@@ -169,7 +169,10 @@ def load_data():
     }
 
     for key, value in defaults.items():
-        result.setdefault(key, value.copy() if isinstance(value, (dict, list)) else value)
+        result.setdefault(
+            key,
+            value.copy() if isinstance(value, (dict, list)) else value
+        )
 
     for key in (
         "active", "cooldowns", "verified", "phone_to_user",
@@ -267,6 +270,7 @@ def is_banned(user_id):
 
     try:
         until = datetime.fromisoformat(ban["until"])
+
         if current_time() < until:
             return True
 
@@ -315,6 +319,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if context.args and context.args[0] == "verify":
+        if is_banned(user.id):
+            await message.reply_text(
+                "⛔ حساب شما موقتاً مسدود شده است."
+            )
+            return
+
         if is_verified(user.id):
             await message.reply_text(
                 "✅ احراز هویت شما قبلاً انجام شده است.",
@@ -338,9 +348,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id == ADMIN_ID:
         await message.reply_text(
             "سلام مدیر عزیز ❤️\n"
-            "برای مشاهده وضعیت ربات دکمه زیر را بزن.",
+            "به پنل مدیریت ربات خوش آمدی.",
             reply_markup=ReplyKeyboardMarkup(
-                [["📡 وضعیت ربات"]],
+                [
+                    ["📡 وضعیت ربات"],
+                    ["🔓 رفع بن کاربر"],
+                ],
                 resize_keyboard=True,
             ),
         )
@@ -365,6 +378,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ---------------- وضعیت ربات و رفع بن ----------------
+
 async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     message = update.effective_message
@@ -375,17 +390,79 @@ async def private_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
 
-    if user.id != ADMIN_ID or message.text != "📡 وضعیت ربات":
+    if user.id != ADMIN_ID:
         return
 
-    if BOT_CONNECTION_STATUS == "وصل":
-        status = "🟢 وضعیت ربات: وصل است."
-    elif BOT_CONNECTION_STATUS == "قطع":
-        status = "🔴 وضعیت ربات: قطع است."
-    else:
-        status = "🟡 وضعیت ربات: در حال راه‌اندازی است."
+    # شروع فرایند رفع بن
+    if message.text == "🔓 رفع بن کاربر":
+        context.user_data["waiting_unban_id"] = True
 
-    await message.reply_text(status)
+        await message.reply_text(
+            "🔓 <b>رفع محرومیت کاربر</b>\n\n"
+            "آیدی عددی کاربری که می‌خواهی از بن خارج شود را ارسال کن:\n\n"
+            "مثال:\n"
+            "<code>123456789</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    # دریافت آیدی عددی برای رفع بن
+    if context.user_data.get("waiting_unban_id"):
+        try:
+            target_id = int(message.text.strip())
+
+            if target_id <= 0:
+                raise ValueError
+
+        except (ValueError, AttributeError):
+            await message.reply_text(
+                "❌ آیدی نامعتبر است.\n"
+                "لطفاً فقط آیدی عددی معتبر ارسال کن."
+            )
+            return
+
+        context.user_data["waiting_unban_id"] = False
+
+        ban = data["bans"].pop(str(target_id), None)
+
+        if not ban:
+            save_data()
+            await message.reply_text(
+                "ℹ️ این کاربر در حال حاضر بن نیست."
+            )
+            return
+
+        save_data()
+
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=(
+                    "🟢 محرومیت حساب شما توسط مدیر برداشته شد.\n\n"
+                    "اکنون می‌توانید دوباره از امکانات ربات استفاده کنید."
+                ),
+            )
+        except TelegramError:
+            pass
+
+        await message.reply_text(
+            "✅ محرومیت کاربر با موفقیت برداشته شد.\n\n"
+            f"🆔 آیدی کاربر: <code>{target_id}</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    # وضعیت ربات
+    if message.text == "📡 وضعیت ربات":
+        if BOT_CONNECTION_STATUS == "وصل":
+            status = "🟢 وضعیت ربات: وصل است."
+        elif BOT_CONNECTION_STATUS == "قطع":
+            status = "🔴 وضعیت ربات: قطع است."
+        else:
+            status = "🟡 وضعیت ربات: در حال راه‌اندازی است."
+
+        await message.reply_text(status)
+        return
 
 
 # ---------------- احراز هویت ----------------
@@ -398,6 +475,10 @@ async def receive_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if update.effective_chat.type != "private":
+        return
+
+    if is_banned(user.id):
+        await message.reply_text("⛔ حساب شما موقتاً مسدود شده است.")
         return
 
     contact = message.contact
@@ -476,10 +557,12 @@ def start_web_server():
 
 async def delete_later(message, seconds=WARNING_SECONDS):
     await asyncio.sleep(seconds)
+
     try:
         await message.delete()
     except TelegramError:
         pass
+
     untrack_message(message.message_id)
 
 
@@ -541,6 +624,7 @@ async def handle_report(query, context):
         return
 
     parts = query.data.split(":")
+
     try:
         owner_id = int(parts[1])
         date_text = parts[2]
@@ -618,11 +702,15 @@ async def handle_report(query, context):
             reply_markup=keyboard,
         )
 
-        await query.answer("✅ پیام تأیید گزارش در پیوی شما ارسال شد.", show_alert=True)
+        await query.answer(
+            "✅ پیام تأیید گزارش در پیوی شما ارسال شد.",
+            show_alert=True,
+        )
 
     except TelegramError:
         data["report_drafts"].pop(rid, None)
         save_data()
+
         await query.answer(
             "❌ ابتدا وارد پیوی ربات شوید و /start را بزنید.",
             show_alert=True,
@@ -651,8 +739,6 @@ async def handle_report_confirmation(query, context):
 
         await query.edit_message_text("❌ درخواست گزارش شما لغو شد.")
         return
-
-    # ثبت گزارش نهایی و ارسال برای مدیر
 
     report_key = draft["report_key"]
 
@@ -750,7 +836,6 @@ async def handle_admin_report_decision(query, context):
         return
 
     if action == "adminreject":
-        # ذخیره زمان دقیق پایان بن؛ ری‌استارت زمان را از اول شروع نمی‌کند.
         now = current_time()
         until = now + timedelta(hours=48)
 
@@ -783,10 +868,12 @@ async def handle_admin_report_decision(query, context):
 
 async def handle_delete(query, context):
     user = query.from_user
+
     if not query.message:
         return
 
     parts = query.data.split(":")
+
     try:
         owner_id = int(parts[1])
     except (IndexError, ValueError):
@@ -832,10 +919,12 @@ async def handle_delete(query, context):
 
 async def handle_remove(query, context):
     user = query.from_user
+
     if not query.message:
         return
 
     parts = query.data.split(":")
+
     try:
         owner_id = int(parts[1])
         date_text = parts[2]
@@ -876,6 +965,7 @@ async def handle_remove(query, context):
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+
     if not query or not query.from_user:
         return
 
@@ -918,15 +1008,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if option_key not in OPTIONS:
         return
 
-    # بررسی محرومیت
     if is_banned(user.id):
         ban = data["bans"][str(user.id)]
         until = datetime.fromisoformat(ban["until"])
 
-        await query.answer(
-            "⛔ حساب شما مسدود است. پایان محرومیت: "
-            + until.strftime("%Y-%m-%d %H:%M"),
-            show_alert=True,
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=(
+                "⛔ حساب شما مسدود است.\n"
+                "زمان پایان محرومیت: "
+                + until.strftime("%Y-%m-%d %H:%M")
+            ),
         )
         return
 
@@ -947,6 +1039,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if cooldown_value:
         try:
             cooldown_until = datetime.fromisoformat(cooldown_value)
+
             if now < cooldown_until:
                 seconds_left = int((cooldown_until - now).total_seconds())
                 minutes_left = max(1, (seconds_left + 59) // 60)
@@ -957,6 +1050,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     user.id,
                 )
                 return
+
         except (ValueError, TypeError):
             data["cooldowns"].pop(key, None)
 
@@ -1046,7 +1140,9 @@ async def midnight_cleanup(app):
     for key, record in list(data["active"].items()):
         if not isinstance(record, dict):
             continue
+
         record_date = record.get("date")
+
         if record_date and record_date >= today:
             preserved_active[key] = record
 
@@ -1061,6 +1157,7 @@ async def midnight_cleanup(app):
     for message_id in list(data["bot_messages"]):
         if message_id == panel_id or message_id in preserved_ids:
             continue
+
         try:
             await app.bot.delete_message(
                 chat_id=GROUP_ID,
@@ -1072,11 +1169,14 @@ async def midnight_cleanup(app):
     data["active"] = preserved_active
 
     new_cooldowns = {}
+
     for key, value in data["cooldowns"].items():
         try:
             _, cooldown_date = key.rsplit(":", 1)
+
             if cooldown_date >= today:
                 new_cooldowns[key] = value
+
         except ValueError:
             continue
 
@@ -1099,6 +1199,7 @@ async def midnight_cleanup(app):
 async def midnight_scheduler(app):
     while True:
         now = current_time()
+
         next_midnight = (now + timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
@@ -1130,16 +1231,21 @@ def next_wednesday_reminder():
 async def reminder_scheduler(app):
     while True:
         target = next_wednesday_reminder()
-        await asyncio.sleep(max(1, (target - current_time()).total_seconds()))
+
+        await asyncio.sleep(
+            max(1, (target - current_time()).total_seconds())
+        )
 
         try:
             msg = await app.bot.send_message(
                 chat_id=GROUP_ID,
                 text="🍽 کد غذا رزرو کنید یادتون نره 😉",
             )
+
             data["reminder_message_id"] = msg.message_id
             track_message(msg.message_id)
             save_data()
+
         except Exception:
             logging.exception("ارسال یادآوری ناموفق بود.")
 
@@ -1183,6 +1289,7 @@ async def post_init(app):
         await app.bot.get_me()
         BOT_CONNECTION_STATUS = "وصل"
         await notify_admin(app, "🟢 ربات وصل شد.")
+
     except Exception:
         BOT_CONNECTION_STATUS = "قطع"
         logging.exception("اتصال اولیه ناموفق بود.")
